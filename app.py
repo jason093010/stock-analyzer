@@ -147,7 +147,9 @@ def db_create_user(uid:str, username:str)->bool:
     try:
         _supabase.table("users").insert({"id": uid, "username": username}).execute()
         return True
-    except: return False
+    except Exception as e:
+        st.error(f"⚠️ 寫入資料庫被拒絕，詳細錯誤：{str(e)}")
+        return False
 
 def db_load_watchlist(uid:str)->list:
     if not HAS_DB: return st.session_state.watchlist
