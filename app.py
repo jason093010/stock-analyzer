@@ -486,10 +486,12 @@ def calc_entry(ind:dict, hist:pd.DataFrame)->dict:
 # ═══════════════════════════════════════
 def call_ai(api_key:str, prompt:str, use_search:bool=False)->str:
     client = genai.Client(api_key=api_key)
+    # 根據可用額度設定模型順序（剔除無額度與 1.5 模型）
     models = [
-        ("gemini-2.5-flash","Gemini 2.5 Flash"),
-        ("gemini-2.0-flash","Gemini 2.0 Flash（備用）"),
-        ("gemini-2.0-flash-lite","Gemini Flash Lite（備用）"),
+        ("gemini-2.5-flash", "Gemini 2.5 Flash"),
+        ("gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite（高額度備用）"),
+        ("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite（備用）"),
+        ("gemini-3-flash", "Gemini 3 Flash（備用）"),
     ]
     last_err = None
     for mid, mname in models:
@@ -505,10 +507,11 @@ def call_ai(api_key:str, prompt:str, use_search:bool=False)->str:
             tag = "＋🔍即時搜尋" if use_search else ""
             return f"> 🤖 {mname}{tag}\n\n{resp.text}"
         except Exception as e:
+            # 捕捉額度耗盡或找不到模型的錯誤，並切換至下一個模型
             if any(k in str(e) for k in ["quota","429","RESOURCE_EXHAUSTED","404","not found"]):
                 last_err=str(e)[:80]; continue
             raise
-    raise Exception(f"所有模型均無法使用：{last_err}")
+    raise Exception(f"所有模型均無法使用或額度已耗盡：{last_err}")
 
 def ai_full_report(ind:dict, info:dict, sym:str, api_key:str, entry:dict, score:dict)->str:
     co   = info.get("longName") or info.get("shortName") or sym
