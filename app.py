@@ -134,6 +134,19 @@ US_HOT = {
 # ═══════════════════════════════════════
 def make_uid(username:str, pin:str)->str:
     return hashlib.sha256(f"{username.lower()}:{pin}".encode()).hexdigest()[:16]
+def db_verify_user(uid:str)->bool:
+    if not HAS_DB: return True # 本機模式直接放行
+    try:
+        r = _supabase.table("users").select("id").eq("id", uid).execute()
+        return len(r.data) > 0
+    except: return False
+
+def db_create_user(uid:str, username:str)->bool:
+    if not HAS_DB: return True # 本機模式直接放行
+    try:
+        _supabase.table("users").insert({"id": uid, "username": username}).execute()
+        return True
+    except: return False
 
 def db_load_watchlist(uid:str)->list:
     if not HAS_DB: return st.session_state.watchlist
@@ -726,33 +739,51 @@ with st.sidebar:
     st.divider()
     st.header("👤 個人帳號")
 
-    if not st.session_state.logged_in:
+if not st.session_state.logged_in:
         with st.expander("🔐 登入 / 建立帳號", expanded=True):
             uname = st.text_input("帳號名稱（自訂）", placeholder="例如：jason123", key="lu")
             upin  = st.text_input("密碼", type="password", placeholder="設定密碼", key="lp")
             ca, cb = st.columns(2)
+            
             with ca:
                 if st.button("🔑 登入", use_container_width=True):
                     if uname.strip() and upin.strip():
                         uid = make_uid(uname.strip(), upin.strip())
-                        st.session_state.user_id   = uid
-                        st.session_state.username  = uname.strip()
-                        st.session_state.logged_in = True
-                        st.session_state.watchlist = db_load_watchlist(uid)
-                        st.session_state.alerts    = db_load_alerts(uid)
-                        st.session_state.portfolio = db_load_portfolio(uid)
-                        st.success(f"✅ 歡迎，{uname}！")
-                        st.rerun()
+                        # 驗證資料庫中是否有此帳號
+                        if db_verify_user(uid):
+                            st.session_state.user_id   = uid
+                            st.session_state.username  = uname.strip()
+                            st.session_state.logged_in = True
+                            st.session_state.watchlist = db_load_watchlist(uid)
+                            st.session_state.alerts    = db_load_alerts(uid)
+                            st.session_state.portfolio = db_load_portfolio(uid)
+                            st.success(f"✅ 歡迎回來，{uname}！")
+                            st.rerun()
+                        else:
+                            st.error("❌ 找不到帳號或密碼錯誤！請先建立帳號。")
+                    else:
+                        st.warning("請輸入帳號與密碼")
+                        
             with cb:
                 if st.button("✨ 建立", use_container_width=True):
                     if uname.strip() and upin.strip():
                         uid = make_uid(uname.strip(), upin.strip())
-                        st.session_state.user_id   = uid
-                        st.session_state.username  = uname.strip()
-                        st.session_state.logged_in = True
-                        st.success(f"✅ 帳號已建立！")
-                        st.rerun()
-            if HAS_DB: st.caption("✅ 雲端模式：資料永久保存")
+                        # 檢查帳號是否已被建立
+                        if db_verify_user(uid):
+                            st.error("⚠️ 此帳號與密碼組合已存在，請直接登入！")
+                        else:
+                            if db_create_user(uid, uname.strip()):
+                                st.session_state.user_id   = uid
+                                st.session_state.username  = uname.strip()
+                                st.session_state.logged_in = True
+                                st.success(f"✅ 帳號建立成功！")
+                                st.rerun()
+                            else:
+                                st.error("❌ 建立失敗，請檢查資料庫連線。")
+                    else:
+                        st.warning("請輸入帳號與密碼")
+                        
+            if HAS_DB: st.caption("✅ 雲端模式：已連線至資料庫")
             else: st.caption("⚠️ 本機模式：重新整理後消失（需設定 Supabase）")
     else:
         st.success(f"👤 {st.session_state.username}")
