@@ -785,7 +785,7 @@ if not st.session_state.logged_in:
                         
             if HAS_DB: st.caption("✅ 雲端模式：已連線至資料庫")
             else: st.caption("⚠️ 本機模式：重新整理後消失（需設定 Supabase）")
-    else:
+else:
         st.success(f"👤 {st.session_state.username}")
         st.caption("✅ 雲端保存" if HAS_DB else "⚠️ 本機模式")
         if st.button("🚪 登出", use_container_width=True):
