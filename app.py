@@ -29,7 +29,7 @@ st.set_page_config(
 )
 
 # ══════════════════════════════════════════════
-# 2. Supabase(保持原有連線邏輯不動)
+# 2. Supabase（保持原有連線邏輯不動）
 # ══════════════════════════════════════════════
 HAS_DB = False
 _supabase = None
@@ -44,7 +44,7 @@ except Exception:
     pass
 
 # ══════════════════════════════════════════════
-# 3. CSS(台灣色系: 紅漲綠跌)
+# 3. CSS（台灣色系：紅漲綠跌）
 # ══════════════════════════════════════════════
 st.markdown("""
 <style>
@@ -262,7 +262,7 @@ US_HOT = {
     "其他":    [("TSLA","特斯拉"),("AMZN","亞馬遜"),("META","Meta"),("NFLX","Netflix")],
 }
 GLOSSARY = {
-    "RSI":"相對強弱指標0~100。>70超買(漲太快)，<30超賣(跌太多)。",
+    "RSI":"相對強弱指標0~100。>70超買（漲太快），<30超賣（跌太多）。",
     "MACD":"動能指標。柱狀圖正值=動能增強；負值=動能減弱。",
     "布林通道":"股價正常波動範圍。通道收窄=大行情即將爆發。",
     "ATR":"每天平均波動多少錢。ATR大=風險高；小=比較穩。",
@@ -277,10 +277,10 @@ GLOSSARY = {
     "MDD最大回撤":"從最高點到最低點的最大跌幅，衡量最壞情況。",
     "蒙地卡羅":"用歷史波動率隨機模擬未來數千條可能路徑，顯示機率區間。",
     "VIX恐慌指數":">30=市場極度恐慌；<15=市場過度樂觀。",
-    "處置效應":"散戶常見心理偏誤: 太早賣出獲利股，太晚出清虧損股。",
+    "處置效應":"散戶常見心理偏誤：太早賣出獲利股，太晚出清虧損股。",
     "總體宏觀制度":"指當前全球經濟所處的大環境，如通膨衰退、復甦成長等，影響所有資產走向。",
 }
-MACRO_REGIMES = ["未知","成長擴張(Risk-On)","通膨衰退(Stagflation)","衰退(Risk-Off)","復甦反彈(Early Cycle)","流動性危機"]
+MACRO_REGIMES = ["未知","成長擴張（Risk-On）","通膨衰退（Stagflation）","衰退（Risk-Off）","復甦反彈（Early Cycle）","流動性危機"]
 
 # ══════════════════════════════════════════════
 # 8. 工具函數
@@ -314,7 +314,7 @@ def pct_fmt(v):
     return f"{v*100:.1f}%" if isinstance(v,float) and v==v else "N/A"
 
 # ══════════════════════════════════════════════
-# 9. 數據抓取(全域替換為 yf.download 批量下載，徹底解決 429 封鎖)
+# 9. 數據抓取（快取 + ThreadPoolExecutor）
 # ══════════════════════════════════════════════
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_data(symbol: str, period: str):
@@ -342,88 +342,84 @@ def fetch_data(symbol: str, period: str):
             
         return h, info, None
     except Exception as e:
-        return None, None, f"抓取失敗: {str(e)[:50]}"
+        return None, None, f"抓取失敗：{str(e)[:50]}" 
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_market_overview():
     syms = {"台灣加權":"^TWII","S&P 500":"^GSPC","那斯達克":"^IXIC",
             "VIX恐慌":"^VIX","費城半導":"^SOX","美元指數":"DX-Y.NYB"}
-    tickers = list(syms.values())
     rows = []
-    try:
-        # 批量下載，發送 1 次請求取代 6 次
-        data = yf.download(tickers, period="2d", group_by="ticker", progress=False)
-        for name, sym in syms.items():
-            try:
-                df = data[sym] if len(tickers)>1 else data
-                if isinstance(df.columns, pd.MultiIndex): df.columns = [c[0] for c in df.columns]
-                if not df.empty and len(df)>=2:
-                    c1 = float(df["Close"].iloc[-2])
-                    c2 = float(df["Close"].iloc[-1])
-                    ch = round((c2 - c1) / max(c1, 0.01) * 100, 2)
-                    rows.append({"名稱":name, "現值":c2, "漲跌%":ch})
-            except: continue
-    except: pass
-    return sorted(rows, key=lambda x: list(syms.keys()).index(x["名稱"])) if rows else []
+    def _fetch_one(name, sym):
+        try:
+            h = yf.Ticker(sym).history(period="2d")
+            if not h.empty and len(h)>=2:
+                p  = round(float(h["Close"].iloc[-1]),2)
+                ch = round((float(h["Close"].iloc[-1])-float(h["Close"].iloc[-2]))/
+                            max(float(h["Close"].iloc[-2]),0.01)*100,2)
+                return {"名稱":name,"現值":p,"漲跌%":ch}
+        except: pass
+        return None
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        futs = {ex.submit(_fetch_one,n,s):(n,s) for n,s in syms.items()}
+        for f in as_completed(futs):
+            r = f.result()
+            if r: rows.append(r)
+    return sorted(rows, key=lambda x: list(syms.keys()).index(x["名稱"]))
 
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_batch_quotes(symbols: tuple) -> dict:
-    if not symbols: return {}
+def fetch_batch_quotes(symbols: list) -> dict:
+    """ThreadPoolExecutor 批量抓取自選股即時報價"""
     results = {}
-    try:
-        # 批量下載自選股，只發送 1 次請求
-        data = yf.download(list(symbols), period="5d", group_by="ticker", progress=False)
-        for sym in symbols:
-            try:
-                df = data[sym] if len(symbols)>1 else data
-                if isinstance(df.columns, pd.MultiIndex): df.columns = [c[0] for c in df.columns]
-                if not df.empty and len(df)>=2:
-                    c1 = float(df["Close"].iloc[-2])
-                    c2 = float(df["Close"].iloc[-1])
-                    ch = round((c2 - c1) / max(c1, 0.01) * 100, 2)
-                    results[sym] = (c2, ch)
-                else: results[sym] = (None, None)
-            except: results[sym] = (None, None)
-    except: pass
+    def _one(sym):
+        try:
+            h = yf.Ticker(sym).history(period="5d")
+            if not h.empty and len(h)>=2:
+                p  = round(float(h["Close"].iloc[-1]),2)
+                ch = round((float(h["Close"].iloc[-1])-float(h["Close"].iloc[-2]))/
+                            max(float(h["Close"].iloc[-2]),0.01)*100,2)
+                return sym,p,ch
+        except: pass
+        return sym,None,None
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futs = [ex.submit(_one,s) for s in symbols]
+        for f in as_completed(futs):
+            sym_r,p_r,ch_r = f.result()
+            results[sym_r] = (p_r,ch_r)
     return results
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_heatmap_data(market: str) -> pd.DataFrame:
+    """ThreadPoolExecutor 批量抓板塊熱力圖數據"""
     hot = TW_HOT if "台股" in market else US_HOT
-    tickers = []
-    sym_map = {}
+    tasks = []
     for sector, stocks in hot.items():
-        for sym_, name_ in stocks:
+        for sym_,name_ in stocks:
             full = sym_+".TW" if "台股" in market and not sym_.endswith(".TW") else sym_
-            tickers.append(full)
-            sym_map[full] = (sector, name_)
-            
+            tasks.append((sector,name_,full))
+
     rows = []
-    if not tickers: return pd.DataFrame()
-    
-    try:
-        # 批量下載，發送 1 次請求取代 16 次，且完全不呼叫最毒的 t.info
-        data = yf.download(tickers, period="2d", group_by="ticker", progress=False)
-        for full in tickers:
-            try:
-                df = data[full] if len(tickers)>1 else data
-                if isinstance(df.columns, pd.MultiIndex): df.columns = [c[0] for c in df.columns]
-                if not df.empty and len(df)>=2:
-                    c1 = float(df["Close"].iloc[-2])
-                    c2 = float(df["Close"].iloc[-1])
-                    if c1 > 0:
-                        ch = round((c2 - c1) / c1 * 100, 2)
-                        sector, name = sym_map[full]
-                        rows.append({
-                            "板塊": sector, "名稱": name, "代號": full.replace(".TW",""),
-                            "漲跌%": ch, "市值": 1e9 # 統一大小以防觸發 429
-                        })
-            except: continue
-    except: pass
-    return pd.DataFrame(rows)
+    def _fetch_hm(sector,name,full):
+        try:
+            t = yf.Ticker(full)
+            h = t.history(period="2d")
+            info = t.info
+            if not h.empty and len(h)>=2:
+                ch = round((float(h["Close"].iloc[-1])-float(h["Close"].iloc[-2]))/
+                            max(float(h["Close"].iloc[-2]),0.01)*100,2)
+                mc = info.get("marketCap",1e9) or 1e9
+                return {"板塊":sector,"名稱":name,"代號":full.replace(".TW",""),
+                        "漲跌%":ch,"市值":mc}
+        except: pass
+        return None
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futs = [ex.submit(_fetch_hm,s,n,f) for s,n,f in tasks]
+        for fut in as_completed(futs):
+            r = fut.result()
+            if r: rows.append(r)
+    return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 # ══════════════════════════════════════════════
-# 10. 技術指標計算(15項 + NaN全防護)
+# 10. 技術指標計算（15項 + NaN全防護）
 # ══════════════════════════════════════════════
 def calc_indicators(hist: pd.DataFrame) -> dict:
     c = hist["Close"].squeeze().astype(float)
@@ -557,11 +553,11 @@ def calc_score(ind: dict, info: dict) -> dict:
     psc=min(15,15 if 30<=pos<=70 else 12 if pos<20 else 10 if pos<30 or pos<80 else 4)
     bsc=min(10,10 if 20<=ind["bb_pct"]<=80 else 7 if ind["bb_pct"]<20 else 3)
     total=trend+mom+vol+psc+bsc
-    if total>=80:   grade,gc="A(優秀)","#ff4444"
-    elif total>=65: grade,gc="B(良好)","#ff8800"
-    elif total>=50: grade,gc="C(普通)","#ffcc00"
-    elif total>=35: grade,gc="D(偏弱)","#88cc44"
-    else:           grade,gc="E(警示)","#22aa44"
+    if total>=80:   grade,gc="A（優秀）","#ff4444"
+    elif total>=65: grade,gc="B（良好）","#ff8800"
+    elif total>=50: grade,gc="C（普通）","#ffcc00"
+    elif total>=35: grade,gc="D（偏弱）","#88cc44"
+    else:           grade,gc="E（警示）","#22aa44"
     return {"total":total,"grade":grade,"gc":gc,
             "trend":trend,"mom":mom,"vol":vol,"pos":psc,"bb":bsc}
 
@@ -592,7 +588,7 @@ def calc_entry(ind: dict, hist: pd.DataFrame) -> dict:
                 atr=atr,lot_cost=round(mod_buy*1000,0))
 
 # ══════════════════════════════════════════════
-# 13. 蒙地卡羅模擬(幾何布朗運動)
+# 13. 蒙地卡羅模擬（幾何布朗運動）
 # ══════════════════════════════════════════════
 def monte_carlo_simulation(hist: pd.DataFrame, days: int = 30, simulations: int = 2000) -> dict:
     """Geometric Brownian Motion，30日錐形不確定區間"""
@@ -627,7 +623,7 @@ def monte_carlo_simulation(hist: pd.DataFrame, days: int = 30, simulations: int 
             "matrix_sample": price_matrix[:50]}
 
 # ══════════════════════════════════════════════
-# 14. Screener(技術面篩選)
+# 14. Screener（技術面篩選）
 # ══════════════════════════════════════════════
 def run_screener(symbols: list, conditions: dict) -> list:
     """多條件批量篩選，ThreadPoolExecutor 加速"""
@@ -687,7 +683,7 @@ def run_dca(symbol: str, monthly_amount: float, years: int):
     return df, stats, None
 
 # ══════════════════════════════════════════════
-# 16. 行為偏誤分析(處置效應)
+# 16. 行為偏誤分析（處置效應）
 # ══════════════════════════════════════════════
 def analyze_behavioral_bias(trades: list) -> dict:
     if len(trades) < 3: return {}
@@ -716,7 +712,7 @@ def analyze_behavioral_bias(trades: list) -> dict:
     }
 
 # ══════════════════════════════════════════════
-# 17. 加權平均成本(多次買入同一股票)
+# 17. 加權平均成本（多次買入同一股票）
 # ══════════════════════════════════════════════
 def weighted_avg_cost(entries: list) -> dict:
     """entries = [{"price":xx,"shares":xx}, ...]"""
@@ -727,7 +723,7 @@ def weighted_avg_cost(entries: list) -> dict:
             "total_shares":total_shares,"total_cost":round(total_cost,2)}
 
 # ══════════════════════════════════════════════
-# 18. Gemini AI(自動切換模型)
+# 18. Gemini AI（自動切換模型）
 # ══════════════════════════════════════════════
 def call_ai(api_key: str, prompt: str, use_search: bool = False) -> str:
     client = genai.Client(api_key=api_key)
@@ -744,190 +740,190 @@ def call_ai(api_key: str, prompt: str, use_search: bool = False) -> str:
                 resp = client.models.generate_content(model=mid,contents=prompt,config=cfg)
             else:
                 resp = client.models.generate_content(model=mid,contents=prompt)
-            tag = "+Search" if use_search else ""
+            tag = "＋🔍即時搜尋" if use_search else ""
             ts  = datetime.now().strftime("%Y-%m-%d %H:%M")
-            return f"> [AI] {mname}{tag} | {ts}\n\n{resp.text}"
+            return f"> 🤖 {mname}{tag}　｜　{ts}\n\n{resp.text}"
         except Exception as e:
             err=str(e)
             if any(k in err for k in ["quota","429","RESOURCE_EXHAUSTED","404","not found"]):
                 last_err=err[:80]; continue
             raise
-    raise Exception(f"所有模型均無法使用: {last_err}")
+    raise Exception(f"所有模型均無法使用：{last_err}")
 
 # ══════════════════════════════════════════════
-# 19. AI Prompts(三方辯論 + 宏觀制度過濾)
+# 19. AI Prompts（三方辯論 + 宏觀制度過濾）
 # ══════════════════════════════════════════════
 def ai_macro_regime(api_key: str) -> str:
     """先確認當前宏觀制度"""
-    prompt = """請即時搜尋並判斷當前(本週)全球總體經濟所處的宏觀制度(Macro Regime)。
+    prompt = """請即時搜尋並判斷當前（本週）全球總體經濟所處的宏觀制度（Macro Regime）。
 
-從以下選項選擇最符合的一個並說明理由(50字以內): 
-- 成長擴張(Risk-On)
-- 通膨衰退(Stagflation)
-- 衰退(Risk-Off)
-- 復甦反彈(Early Cycle)
+從以下選項選擇最符合的一個並說明理由（50字以內）：
+- 成長擴張（Risk-On）
+- 通膨衰退（Stagflation）
+- 衰退（Risk-Off）
+- 復甦反彈（Early Cycle）
 - 流動性危機
 
-格式(嚴格遵守): 
-**制度: ** [選項名稱]
-**理由: ** [50字以內說明，包含聯準會動向、GDP、通膨數據]
+格式（嚴格遵守）：
+**制度：** [選項名稱]
+**理由：** [50字以內說明，包含聯準會動向、GDP、通膨數據]
 
 禁止廢話。繁體中文。"""
     return call_ai(api_key, prompt, use_search=True)
 
 def ai_three_agent_debate(ind, info, sym, api_key, entry, score, macro_regime) -> tuple:
-    """三方辯論: 多頭 vs 空頭 vs CIO裁判"""
+    """三方辯論：多頭 vs 空頭 vs CIO裁判"""
     co  = info.get("longName") or info.get("shortName") or sym
     atr = entry["atr"]
     bull_range = f"{round(ind['price']+1.5*atr,2)}"
     bear_range = f"{round(ind['price']-1.5*atr,2)}"
 
     base_data = f"""
-股票: {co}({sym})|現價: {ind['price']}|今日: {ind['change_pct']}%|月: {ind['change_1m']}%
-評分: {score['total']}/100({score['grade']})|狀態: {ind['status']}
+股票：{co}（{sym}）｜現價：{ind['price']}｜今日：{ind['change_pct']}%｜月：{ind['change_1m']}%
+評分：{score['total']}/100（{score['grade']}）｜狀態：{ind['status']}
 MA5={ind['ma5']} MA20={ind['ma20']} MA60={ind['ma60']}
 RSI={ind['rsi']} StochK={ind['stoch_k']} Williams%R={ind['williams_r']}
 MACD_H={ind['macd_hist']} ATR={atr} OBV={'↑' if ind['obv']>0 else '↓'}
 布林位置={ind['bb_pct']:.0f}% {ind['vol_desc']} 52W位置={ind['position_52w']}%
 支撐={entry['sup1']}/{entry['sup2']} 壓力={entry['res1']}/{entry['res2']}
 PE={info.get('trailingPE','N/A')} PB={info.get('priceToBook','N/A')} Beta={info.get('beta','N/A')}
-**當前宏觀制度: {macro_regime}**
+**當前宏觀制度：{macro_regime}**
     """
 
     # ── 多頭代理人 ──
-    bull_prompt = f"""你是一位狂熱的多頭分析師(Permabull Agent)。你的任務是找出所有看漲理由，並做最強力的多頭辯護。
+    bull_prompt = f"""你是一位狂熱的多頭分析師（Permabull Agent）。你的任務是找出所有看漲理由，並做最強力的多頭辯護。
 
 {base_data}
 
-宏觀制度懲罰/獎勵規則: 
+宏觀制度懲罰/獎勵規則：
 - 若制度為「成長擴張」或「復甦反彈」→ 多頭論點信心加成+20%
 - 若制度為「通膨衰退」或「衰退」→ 你的論點需特別強調防禦性與超賣反彈邏輯
 - 若制度為「流動性危機」→ 你必須承認大環境不利，但找個股alpha
 
-請即時搜尋最新正面消息後，輸出(禁止廢話、條列式、繁體中文): 
+請即時搜尋最新正面消息後，輸出（禁止廢話、條列式、繁體中文）：
 
-## 🔴 多頭論點(Permabull)
-- **核心催化劑**: (搜尋最新正面消息，條列3點)
-- **技術面多頭證據**: (從15項指標中找最強的3個多頭訊號)
-- **ATR多頭情境**: 明日若多方主導，目標 **{bull_range}**(說明技術依據)
-- **宏觀制度加分**: 在「{macro_regime}」環境下，為什麼這支股票仍有機會？
-- **多頭信心評級**: ⬛/5(說明理由)
+## 🔴 多頭論點（Permabull）
+- **核心催化劑**：（搜尋最新正面消息，條列3點）
+- **技術面多頭證據**：（從15項指標中找最強的3個多頭訊號）
+- **ATR多頭情境**：明日若多方主導，目標 **{bull_range}**（說明技術依據）
+- **宏觀制度加分**：在「{macro_regime}」環境下，為什麼這支股票仍有機會？
+- **多頭信心評級**：⬛/5（說明理由）
 
 不得提任何空頭觀點。禁止「一定」「保證」「必漲」。"""
 
     # ── 空頭代理人 ──
-    bear_prompt = f"""你是一位極度悲觀的空頭分析師(Ruthless Bear Agent)。你的任務是無情揭露所有看跌風險，做最嚴酷的空頭論證。
+    bear_prompt = f"""你是一位極度悲觀的空頭分析師（Ruthless Bear Agent）。你的任務是無情揭露所有看跌風險，做最嚴酷的空頭論證。
 
 {base_data}
 
-宏觀制度懲罰/獎勵規則: 
+宏觀制度懲罰/獎勵規則：
 - 若制度為「通膨衰退」或「衰退」或「流動性危機」→ 空頭論點信心加成+20%
 - 若制度為「成長擴張」→ 你需要找個股特定風險和技術面超買訊號
 - 所有宏觀制度下，你都必須指出聯準會政策風險和地緣政治黑天鵝
 
-請即時搜尋最新負面消息後，輸出(禁止廢話、條列式、繁體中文): 
+請即時搜尋最新負面消息後，輸出（禁止廢話、條列式、繁體中文）：
 
-## 🟢 空頭論點(Ruthless Bear)
-- **核心威脅**: (搜尋最新負面消息/風險，條列3點)
-- **技術面空頭證據**: (從15項指標中找最強的3個空頭訊號)
-- **ATR空頭情境**: 明日若空方主導，目標 **{bear_range}**(說明技術依據)
-- **宏觀制度懲罰**: 在「{macro_regime}」環境下，為什麼這支股票面臨更大風險？
-- **黑天鵝事件**: 最可能摧毀多頭論點的1個具體風險
-- **空頭信心評級**: ⬛/5
+## 🟢 空頭論點（Ruthless Bear）
+- **核心威脅**：（搜尋最新負面消息/風險，條列3點）
+- **技術面空頭證據**：（從15項指標中找最強的3個空頭訊號）
+- **ATR空頭情境**：明日若空方主導，目標 **{bear_range}**（說明技術依據）
+- **宏觀制度懲罰**：在「{macro_regime}」環境下，為什麼這支股票面臨更大風險？
+- **黑天鵝事件**：最可能摧毀多頭論點的1個具體風險
+- **空頭信心評級**：⬛/5
 
 不得提任何多頭觀點。禁止「一定」「保證」「必跌」。"""
 
     # ── CIO裁判 ──
-    judge_prompt = f"""你是一位冷靜理性的投資長(CIO Judge)。你已收到多頭和空頭的辯論報告，現在做出最終裁決。
+    judge_prompt = f"""你是一位冷靜理性的投資長（CIO Judge）。你已收到多頭和空頭的辯論報告，現在做出最終裁決。
 
 {base_data}
 
-**宏觀制度裁決規則(必須執行): **
+**宏觀制度裁決規則（必須執行）：**
 - 「成長擴張」→ 給多頭+10%信心加成
 - 「通膨衰退/衰退」→ 給空頭+15%信心加成，要求更高的安全邊際
 - 「流動性危機」→ 直接評為觀望，除非有極強防禦性
 - 「復甦反彈」→ 給多頭+5%，但提醒反彈幅度有限
 
-ATR計算參數: 現價={ind['price']}，ATR={atr}
-樂觀情境: {round(ind['price']+1.5*atr,2)}，悲觀情境: {round(ind['price']-1.5*atr,2)}，中性: {round(ind['price']-0.5*atr,2)}～{round(ind['price']+0.5*atr,2)}
+ATR計算參數：現價={ind['price']}，ATR={atr}
+樂觀情境：{round(ind['price']+1.5*atr,2)}，悲觀情境：{round(ind['price']-1.5*atr,2)}，中性：{round(ind['price']-0.5*atr,2)}～{round(ind['price']+0.5*atr,2)}
 
-輸出(禁止廢話、條列式、繁體中文): 
+輸出（禁止廢話、條列式、繁體中文）：
 
 ## 🟣 CIO最終裁決
-- **多空力道對比**: 多頭論點強度X/10 vs 空頭論點強度Y/10
-- **宏觀制度影響**: 在「{macro_regime}」環境下的最終加減分評估
-- **最終方向裁決**: 偏多/偏空/中性觀望(必須明確，附理由)
-- **明日精準預測**(嚴格基於ATR={atr}，不超過±3倍ATR): 
-  - 最可能情境: ___～___ 
-  - 關鍵多方守位: **{entry['sup1']}**(跌破=空方勝)
-  - 關鍵空方突破: **{entry['res1']}**(帶量突破=多方勝)
-- **投資建議**(⚠️僅供參考不構成投資建議): 
-  - 穩健買入區: {entry['mod_buy']}|停損: {entry['sl_normal']}|T1: {entry['tp1']}|風報比: {entry['rr']}:1
+- **多空力道對比**：多頭論點強度X/10 vs 空頭論點強度Y/10
+- **宏觀制度影響**：在「{macro_regime}」環境下的最終加減分評估
+- **最終方向裁決**：偏多/偏空/中性觀望（必須明確，附理由）
+- **明日精準預測**（嚴格基於ATR={atr}，不超過±3倍ATR）：
+  - 最可能情境：___～___ 
+  - 關鍵多方守位：**{entry['sup1']}**（跌破=空方勝）
+  - 關鍵空方突破：**{entry['res1']}**（帶量突破=多方勝）
+- **投資建議**（⚠️僅供參考不構成投資建議）：
+  - 穩健買入區：{entry['mod_buy']}｜停損：{entry['sl_normal']}｜T1：{entry['tp1']}｜風報比：{entry['rr']}:1
   - 台股一張≈{entry['lot_cost']:,.0f}元
-- **信心評級**: ⬛/5(說明)
-- **新手一句話**: (用最簡單的語言告訴小白現在應該怎麼對待這支股票)
+- **信心評級**：⬛/5（說明）
+- **新手一句話**：（用最簡單的語言告訴小白現在應該怎麼對待這支股票）
 
 禁止「一定」「保證」「必漲」「必跌」。"""
 
-    # 三路並發(但 Streamlit 中需Sequential避免rate limit)
+    # 三路並發（但 Streamlit 中需Sequential避免rate limit）
     bull_rpt = call_ai(api_key, bull_prompt, use_search=True)
     bear_rpt = call_ai(api_key, bear_prompt, use_search=True)
     judge_rpt= call_ai(api_key, judge_prompt, use_search=False)
     return bull_rpt, bear_rpt, judge_rpt
 
 def ai_portfolio_cio(portfolio_data: str, sector_data: str, api_key: str) -> str:
-    prompt = f"""你是一位極度嚴苛的投資長(CIO)，負責審查以下客戶的整體投資組合並強制執行「汰弱留強」。
+    prompt = f"""你是一位極度嚴苛的投資長（CIO），負責審查以下客戶的整體投資組合並強制執行「汰弱留強」。
 
 {portfolio_data}
 
-板塊分佈: {sector_data}
+板塊分佈：{sector_data}
 
-請即時搜尋各持股最新動態後，輸出(繁體中文、條列式、禁止廢話): 
+請即時搜尋各持股最新動態後，輸出（繁體中文、條列式、禁止廢話）：
 
 ## 🏦 組合健康診斷
-- 板塊集中度風險(某板塊>40%則視為過度集中)
+- 板塊集中度風險（某板塊>40%則視為過度集中）
 - 整體多空配置評估
 - Beta加權組合波動度估算
 
 ## ⚔️ 汰弱留強建議
-(對每支持股給出: 繼續持有/減碼/立即清倉，附一句話理由)
+（對每支持股給出：繼續持有/減碼/立即清倉，附一句話理由）
 
 ## 🔄 組合優化建議
-- 應該移除的1~2支最弱標的(附具體理由)
-- 可以加倉的1~2支最強標的(附具體理由)
+- 應該移除的1~2支最弱標的（附具體理由）
+- 可以加倉的1~2支最強標的（附具體理由）
 - 是否需要加入防禦性資產對沖？
 
 ## ⚠️ 新手常見組合錯誤
-(針對此組合的3個具體問題)
+（針對此組合的3個具體問題）
 
 禁止「一定」「保證」「必漲」「必跌」。"""
     return call_ai(api_key, prompt, use_search=True)
 
 def ai_entry_critique(sym, co, buy_price, buy_date, ind_at_buy, current_price, api_key) -> str:
-    prompt = f"""你是一位無情的交易教練，對以下買入點進行事後覆盤(Post-Mortem)。
+    prompt = f"""你是一位無情的交易教練，對以下買入點進行事後覆盤（Post-Mortem）。
 
-**交易資訊: **
-股票: {co}({sym})
-買入日期: {buy_date}|買入價: {buy_price}|現價: {current_price}
-損益: {round((current_price-buy_price)/max(buy_price,0.01)*100,2):+.2f}%
+**交易資訊：**
+股票：{co}（{sym}）
+買入日期：{buy_date}｜買入價：{buy_price}｜現價：{current_price}
+損益：{round((current_price-buy_price)/max(buy_price,0.01)*100,2):+.2f}%
 
-**買入當日技術面(重建): **
+**買入當日技術面（重建）：**
 {ind_at_buy}
 
-請輸出(繁體中文、條列式、禁止廢話): 
+請輸出（繁體中文、條列式、禁止廢話）：
 
 ## 🔬 買點覆盤診斷
-- 買入時技術面評估(合理/偏早/偏晚/嚴重錯誤)
+- 買入時技術面評估（合理/偏早/偏晚/嚴重錯誤）
 - 哪個指標支持買入？哪個指標反對？
 - 如果用現在的系統評分，當時可能得幾分？
 
 ## 🎯 當前持股處置建議
-**明確選擇一個(必須): A.繼續持有 / B.移動停利 / C.停損出場**
-- 選擇理由(技術面為主，3點)
-- 具體操作: 止損價/移動停利位/加碼條件
+**明確選擇一個（必須）：A.繼續持有 / B.移動停利 / C.停損出場**
+- 選擇理由（技術面為主，3點）
+- 具體操作：止損價/移動停利位/加碼條件
 
 ## 🧠 心理偏誤提醒
-(根據此交易，診斷可能存在的心理偏誤，如處置效應、確認偏誤等)
+（根據此交易，診斷可能存在的心理偏誤，如處置效應、確認偏誤等）
 
 禁止廢話開場白。禁止「一定」「保證」。"""
     return call_ai(api_key, prompt, use_search=False)
@@ -936,53 +932,53 @@ def ai_bias_warning(bias_data: dict, trades_summary: str, api_key: str) -> str:
     disposition = bias_data.get("disposition_effect", False)
     prompt = f"""你是行為財務學專家，分析以下投資人的交易記錄，診斷心理偏誤。
 
-交易統計: 
-- 總交易次數: {bias_data.get('win_count',0)+bias_data.get('lose_count',0)}
-- 勝率: {bias_data.get('win_rate',0)}%
-- 平均獲利幅度: +{bias_data.get('avg_win_pct',0):.2f}%
-- 平均虧損幅度: -{bias_data.get('avg_loss_pct',0):.2f}%
-- 平均持有獲利股天數: {bias_data.get('avg_win_days',0):.0f}天
-- 平均持有虧損股天數: {bias_data.get('avg_loss_days',0):.0f}天
-- 處置效應診斷: {'⚠️ 是(持虧損股時間顯著長於持獲利股)' if disposition else '✅ 未明顯發現'}
+交易統計：
+- 總交易次數：{bias_data.get('win_count',0)+bias_data.get('lose_count',0)}
+- 勝率：{bias_data.get('win_rate',0)}%
+- 平均獲利幅度：+{bias_data.get('avg_win_pct',0):.2f}%
+- 平均虧損幅度：-{bias_data.get('avg_loss_pct',0):.2f}%
+- 平均持有獲利股天數：{bias_data.get('avg_win_days',0):.0f}天
+- 平均持有虧損股天數：{bias_data.get('avg_loss_days',0):.0f}天
+- 處置效應診斷：{'⚠️ 是（持虧損股時間顯著長於持獲利股）' if disposition else '✅ 未明顯發現'}
 
-近期交易記錄: 
+近期交易記錄：
 {trades_summary}
 
-請輸出(繁體中文、條列式): 
+請輸出（繁體中文、條列式）：
 
 ## 🧠 行為偏誤診斷報告
-{'## ⚠️ 嚴重警告: 偵測到處置效應(Disposition Effect)！' if disposition else ''}
-- 你的交易數據顯示: (說明具體數字問題)
-- 最可能的3個心理偏誤(附白話解釋)
+{'## ⚠️ 嚴重警告：偵測到處置效應（Disposition Effect）！' if disposition else ''}
+- 你的交易數據顯示：（說明具體數字問題）
+- 最可能的3個心理偏誤（附白話解釋）
 - 這樣的行為模式，長期會如何影響報酬？
 
 ## 💊 矯正方案
 - 3個具體的交易紀律改善方法
-- 建議設立的強制規則(如: 任何交易最大虧損不超過X%)
+- 建議設立的強制規則（如：任何交易最大虧損不超過X%）
 
 禁止廢話開場白。"""
     return call_ai(api_key, prompt, use_search=False)
 
 # ══════════════════════════════════════════════
-# 20. 圖表(台灣色系: 紅漲綠跌)
+# 20. 圖表（台灣色系：紅漲綠跌）
 # ══════════════════════════════════════════════
 DARK = "plotly_dark"
-TW_UP   = "#ff3333"   # 台灣: 紅色=漲
-TW_DOWN = "#22cc44"   # 台灣: 綠色=跌
+TW_UP   = "#ff3333"   # 台灣：紅色=漲
+TW_DOWN = "#22cc44"   # 台灣：綠色=跌
 
 def build_main_chart(hist, ind, entry, sym, mc_data=None, buy_markers=None):
-    """主圖表: K線+均線+布林+蒙地卡羅+買入標記"""
+    """主圖表：K線+均線+布林+蒙地卡羅+買入標記"""
     idx = hist.index
     rows = 4; heights = [0.50,0.18,0.17,0.15]
-    titles = ["K線+均線+布林(台灣色系: 紅漲綠跌)","成交量","RSI+Stochastic","MACD"]
+    titles = ["K線+均線+布林（台灣色系：紅漲綠跌）","成交量","RSI+Stochastic","MACD"]
     if mc_data:
         rows=5; heights=[0.42,0.18,0.15,0.13,0.12]
-        titles.append("蒙地卡羅模擬(30日錐形區間)")
+        titles.append("蒙地卡羅模擬（30日錐形區間）")
 
     fig = make_subplots(rows=rows,cols=1,shared_xaxes=True,
                         row_heights=heights,subplot_titles=titles,vertical_spacing=0.03)
 
-    # ── K線(台灣色系)──
+    # ── K線（台灣色系）──
     fig.add_trace(go.Candlestick(
         x=idx,open=hist["Open"],high=hist["High"],
         low=hist["Low"],close=hist["Close"],name="K線",
@@ -1024,7 +1020,7 @@ def build_main_chart(hist, ind, entry, sym, mc_data=None, buy_markers=None):
                 name=f"買入 {bm['price']}",showlegend=True,
             ),row=1,col=1)
 
-    # 成交量(台灣色系)
+    # 成交量（台灣色系）
     vc=[TW_UP if c>=o else TW_DOWN for c,o in zip(hist["Close"],hist["Open"])]
     fig.add_trace(go.Bar(x=idx,y=ind["_v"],marker_color=vc,showlegend=False),row=2,col=1)
     fig.add_trace(go.Scatter(x=idx,y=ind["_v"].rolling(20).mean(),
@@ -1036,13 +1032,13 @@ def build_main_chart(hist, ind, entry, sym, mc_data=None, buy_markers=None):
     for lv,lc in [(70,"rgba(255,51,51,0.4)"),(50,"rgba(150,150,150,0.3)"),(30,"rgba(34,204,68,0.4)")]:
         fig.add_hline(y=lv,line_dash="dash",line_color=lc,row=3,col=1)
 
-    # MACD(台灣色系)
+    # MACD（台灣色系）
     mc_c=[TW_UP if x>=0 else TW_DOWN for x in ind["_macd_h"]]
     fig.add_trace(go.Bar(x=idx,y=ind["_macd_h"],marker_color=mc_c,showlegend=False),row=4,col=1)
     fig.add_trace(go.Scatter(x=idx,y=ind["_macd"],line=dict(color="#42A5F5",width=1),showlegend=False),row=4,col=1)
     fig.add_trace(go.Scatter(x=idx,y=ind["_macd_sig"],line=dict(color="#FF7043",width=1),showlegend=False),row=4,col=1)
 
-    # 蒙地卡羅(第5列)
+    # 蒙地卡羅（第5列）
     if mc_data:
         mc_row = 5
         fd = mc_data["dates"]
@@ -1062,7 +1058,7 @@ def build_main_chart(hist, ind, entry, sym, mc_data=None, buy_markers=None):
             fig.add_trace(go.Scatter(x=fd,y=path,
                 line=dict(color="rgba(200,200,200,0.1)",width=0.5),showlegend=False),row=mc_row,col=1)
 
-    fig.update_layout(template=DARK,title=f"{sym} 技術分析(🔴漲 🟢跌)",
+    fig.update_layout(template=DARK,title=f"{sym} 技術分析（🔴漲 🟢跌）",
                       height=900 if mc_data else 780,
                       xaxis_rangeslider_visible=False,
                       legend=dict(orientation="h",y=1.02,font_size=11),
@@ -1070,14 +1066,14 @@ def build_main_chart(hist, ind, entry, sym, mc_data=None, buy_markers=None):
     return fig
 
 def build_heatmap_chart(df: pd.DataFrame, market: str):
-    """板塊熱力圖(台灣色系)"""
+    """板塊熱力圖（台灣色系）"""
     if df.empty: return None
     fig = px.treemap(df,path=["板塊","名稱"],values="市值",
         color="漲跌%",
         color_continuous_scale=[(0.0,TW_DOWN),(0.5,"#333333"),(1.0,TW_UP)],  # 台灣色系
         color_continuous_midpoint=0,
         custom_data=["代號","漲跌%"],
-        title=f"{'台股' if '台股' in market else '美股'} 板塊熱力圖(🔴漲 🟢跌)",
+        title=f"{'台股' if '台股' in market else '美股'} 板塊熱力圖（🔴漲 🟢跌）",
         template=DARK)
     fig.update_traces(
         texttemplate="<b>%{label}</b><br>%{customdata[1]:.2f}%",
@@ -1097,7 +1093,7 @@ def build_portfolio_sunburst(portfolio: dict, sector_map: dict) -> go.Figure:
     if not rows: return None
     df = pd.DataFrame(rows)
     fig = px.sunburst(df,path=["板塊","代號"],values="市值",
-        title="持股板塊旭日圖(方塊大小=持倉成本)",template=DARK,
+        title="持股板塊旭日圖（方塊大小=持倉成本）",template=DARK,
         color_discrete_sequence=px.colors.qualitative.Set3)
     fig.update_layout(height=450,margin=dict(l=10,r=10,t=60,b=10))
     return fig
@@ -1111,7 +1107,7 @@ def build_dca_chart(df_dca: pd.DataFrame, sym: str) -> go.Figure:
         fill="tozeroy",name="資產現值",
         line=dict(color=TW_UP,width=2),fillcolor="rgba(255,51,51,0.15)"))
     fig.update_layout(template=DARK,title=f"{sym} 定期定額回測",
-                      yaxis_title="金額(元)",height=420,
+                      yaxis_title="金額（元）",height=420,
                       legend=dict(orientation="h",y=1.02),
                       margin=dict(l=50,r=30,t=60,b=30))
     return fig
@@ -1132,7 +1128,7 @@ def build_mc_standalone(mc_data: dict, sym: str) -> go.Figure:
             line=dict(color="rgba(200,200,200,0.07)",width=0.5),showlegend=False))
     fig.add_hline(y=mc_data["last"],line_dash="dash",line_color="rgba(255,255,255,0.5)",
                   annotation_text="現價")
-    fig.update_layout(template=DARK,title=f"{sym} 蒙地卡羅30日模擬(幾何布朗運動，2000條路徑)",
+    fig.update_layout(template=DARK,title=f"{sym} 蒙地卡羅30日模擬（幾何布朗運動，2000條路徑）",
                       yaxis_title="預估價格",height=450,
                       legend=dict(orientation="h",y=1.02),
                       margin=dict(l=50,r=30,t=70,b=30))
@@ -1199,17 +1195,17 @@ with st.sidebar:
         st.success("🔑 API 金鑰已自動帶入")
         if st.button("🔄 更換金鑰"):
             st.session_state.api_key=""; st.rerun()
-        api_key = "".join(c for c in str(st.session_state.api_key) if ord(c) < 128).strip() if st.session_state.api_key else ""
+        api_key = st.session_state.api_key
     else:
         api_key_in = st.text_input("🔑 Gemini API 金鑰",type="password",placeholder="AIza...",
             help="至 aistudio.google.com 免費取得。登入後加密儲存，下次自動帶入。",
             value=st.session_state.api_key)
         if api_key_in and api_key_in!=st.session_state.api_key:
-            st.session_state.api_key="".join(c for c in str(api_key_in) if ord(c) < 128).strip()
+            st.session_state.api_key=api_key_in
             if st.session_state.logged_in and HAS_DB:
                 db_save_enc_key(st.session_state.username,st.session_state._pin,api_key_in)
                 st.success("🔒 已加密儲存")
-        api_key = "".join(c for c in str(st.session_state.api_key) if ord(c) < 128).strip() if st.session_state.api_key else ""
+        api_key = st.session_state.api_key
 
     st.divider()
     st.header("📊 分析設定")
@@ -1236,7 +1232,7 @@ with st.sidebar:
                     if r in regime_rpt:
                         st.session_state.macro_regime=r
                         macro_regime=r; break
-                st.success(f"✅ 制度偵測完成: {st.session_state.macro_regime}")
+                st.success(f"✅ 制度偵測完成：{st.session_state.macro_regime}")
                 with st.expander("查看AI制度分析"): st.markdown(regime_rpt)
             except Exception as e: st.error(str(e)[:50])
 
@@ -1289,7 +1285,7 @@ with st.sidebar:
 # 22. 主頁面
 # ══════════════════════════════════════════════
 st.title("📈 股市小白分析系統 Pro V2")
-st.caption("AI三方辯論 × 蒙地卡羅模擬 × 行為偏誤診斷 × 機構級量化 × 🔴紅漲🟢跌(台灣色系)")
+st.caption("AI三方辯論 × 蒙地卡羅模擬 × 行為偏誤診斷 × 機構級量化 × 🔴紅漲🟢跌（台灣色系）")
 
 # 大盤列
 mkt = fetch_market_overview()
@@ -1299,11 +1295,11 @@ if mkt:
         chg=row["漲跌%"]
         col.metric(row["名稱"],str(row["現值"]),
             f"{'▲' if chg>=0 else '▼'}{abs(chg):.2f}%",
-            delta_color="inverse")  # 台灣色系: inverse
+            delta_color="inverse")  # 台灣色系：inverse
 
 # 最近查詢
 if st.session_state.recent_searches:
-    st.markdown("**🕐 最近查詢: **")
+    st.markdown("**🕐 最近查詢：**")
     rc=st.columns(min(len(st.session_state.recent_searches),8))
     for i,rs in enumerate(st.session_state.recent_searches):
         if rc[i].button(rs,key=f"rc_{i}"):
@@ -1311,13 +1307,13 @@ if st.session_state.recent_searches:
             st.session_state.auto_analyze=True; st.rerun()
 
 # 宏觀制度橫幅
-regime_colors={"成長擴張(Risk-On)":"#cc2222","復甦反彈(Early Cycle)":"#aa3333",
-               "通膨衰退(Stagflation)":"#446644","衰退(Risk-Off)":"#228844",
+regime_colors={"成長擴張（Risk-On）":"#cc2222","復甦反彈（Early Cycle）":"#aa3333",
+               "通膨衰退（Stagflation）":"#446644","衰退（Risk-Off）":"#228844",
                "流動性危機":"#4422aa","未知":"#444444"}
 rc=regime_colors.get(macro_regime,"#444444")
 st.markdown(f"""<div style="background:{rc};border-radius:8px;padding:8px 16px;margin:6px 0;text-align:center">
-    <span style="color:white;font-weight:bold">🌍 當前宏觀制度: {macro_regime}</span>
-    <span style="color:rgba(255,255,255,0.7);font-size:12px;margin-left:12px">(影響AI三方辯論加減分)</span>
+    <span style="color:white;font-weight:bold">🌍 當前宏觀制度：{macro_regime}</span>
+    <span style="color:rgba(255,255,255,0.7);font-size:12px;margin-left:12px">（影響AI三方辯論加減分）</span>
 </div>""",unsafe_allow_html=True)
 
 st.divider()
@@ -1325,7 +1321,7 @@ st.divider()
 TABS = st.tabs(["📊 個股戰情室","💼 我的資產庫","📊 選股+回測","🗺️ 市場總覽","🧠 交易心理診斷"])
 
 # ══════════════════════════════════════════════
-# TAB 1: 個股戰情室
+# TAB 1：個股戰情室
 # ══════════════════════════════════════════════
 with TABS[0]:
     # 快速選股
@@ -1349,20 +1345,11 @@ with TABS[0]:
         st.write(""); st.write("")
         go_btn = st.button("🔍 開始分析",use_container_width=True,type="primary")
 
-    # 💡 狀態記憶修復: 避免輸入框重新整理導致畫面消失
-    if "current_sym" not in st.session_state:
-        st.session_state.current_sym = ""
+    should_run = go_btn or (st.session_state.auto_analyze and st.session_state.quick_sym)
+    if st.session_state.auto_analyze: st.session_state.auto_analyze=False
 
-    # 當按下開始分析，或從快速選股點擊時，更新當前股票
-    if go_btn and ticker_in.strip():
-        st.session_state.current_sym = ticker_in.strip()
-    elif st.session_state.auto_analyze and st.session_state.quick_sym:
-        st.session_state.current_sym = st.session_state.quick_sym
-        st.session_state.auto_analyze = False
-
-    # 只要 current_sym 有值，就保持分析畫面
-    if st.session_state.current_sym:
-        use_sym = st.session_state.current_sym
+    if should_run and (ticker_in or st.session_state.quick_sym).strip():
+        use_sym = ticker_in.strip() or st.session_state.quick_sym
         if not api_key: st.warning("⚠️ 請先輸入 Gemini API 金鑰"); st.stop()
         sym = get_sym(use_sym, market)
         add_recent(sym)
@@ -1394,15 +1381,15 @@ with TABS[0]:
                     if col_name in cal.columns:
                         ev_date = cal[col_name].iloc[0]
                         if ev_date and (pd.to_datetime(ev_date).date()-date.today()).days<=14:
-                            st.markdown(f'<div class="event-warn">⚠️ 事件雷達: {label} = {ev_date} (距今≤14天！)</div>',
+                            st.markdown(f'<div class="event-warn">⚠️ 事件雷達：{label} = {ev_date} （距今≤14天！）</div>',
                                         unsafe_allow_html=True)
         except: pass
 
         # 標題列
         hc,sc_col=st.columns([5,1])
         with hc:
-            st.subheader(f"📌 {co}({sym})")
-            st.caption(f"數據時間: {ts}|宏觀制度: {macro_regime}")
+            st.subheader(f"📌 {co}（{sym}）")
+            st.caption(f"數據時間：{ts}｜宏觀制度：{macro_regime}")
         with sc_col:
             if sym not in st.session_state.watchlist:
                 if st.button("⭐ 追蹤",use_container_width=True):
@@ -1431,7 +1418,7 @@ with TABS[0]:
                 <h3 style="margin:0;color:#e2e8f0">{ind['sc']} {ind['status']}</h3>
                 <p style="margin:5px 0 0;color:#94a3b8;font-size:13px">{ind['status_desc']}</p>
             </div>""",unsafe_allow_html=True)
-            # 台灣色系: 漲=紅=inverse
+            # 台灣色系：漲=紅=inverse
             ci="🔴" if ind["change_pct"]>=0 else "🟢"
             r1,r2,r3 = st.columns(3)
             r1.metric("💰 現價",  ind["price"])
@@ -1448,62 +1435,62 @@ with TABS[0]:
         with st.expander("🔍 各指標白話解讀", expanded=True):
             ia,ib,ic_ = st.columns(3)
             with ia:
-                st.info(f"**📏 RSI({ind['rsi']})**\n\n{ind['rsi_desc']}")
+                st.info(f"**📏 RSI（{ind['rsi']}）**\n\n{ind['rsi_desc']}")
                 sk=ind["stoch_k"]
-                st.info(f"**📊 Stoch K({sk})**\n\n{'⚠️ >80超買' if sk>80 else '💡 <20超賣' if sk<20 else '➡️ 中性'}")
+                st.info(f"**📊 Stoch K（{sk}）**\n\n{'⚠️ >80超買' if sk>80 else '💡 <20超賣' if sk<20 else '➡️ 中性'}")
             with ib:
                 st.info(f"**📦 {ind['vol_desc']}**")
                 bp=ind["bb_pct"]
-                st.info(f"**📐 布林({bp:.0f}%)**\n\n{'⚠️ 接近上軌，過熱' if bp>80 else '💡 接近下軌，超賣' if bp<20 else '✅ 通道中段'}")
+                st.info(f"**📐 布林（{bp:.0f}%）**\n\n{'⚠️ 接近上軌，過熱' if bp>80 else '💡 接近下軌，超賣' if bp<20 else '✅ 通道中段'}")
             with ic_:
-                st.info(f"**📅 52週({ind['position_52w']}%)**\n\n{'接近高點，相對貴' if ind['position_52w']>80 else '接近低點，相對便宜' if ind['position_52w']<20 else '中間區域'}")
+                st.info(f"**📅 52週（{ind['position_52w']}%）**\n\n{'接近高點，相對貴' if ind['position_52w']>80 else '接近低點，相對便宜' if ind['position_52w']<20 else '中間區域'}")
                 mh=ind["macd_hist"]
-                st.info(f"**📡 MACD({mh:.4f})**\n\n{'📈正值，動能增強' if mh>0 else '📉負值，動能減弱'}")
+                st.info(f"**📡 MACD（{mh:.4f}）**\n\n{'📈正值，動能增強' if mh>0 else '📉負值，動能減弱'}")
 
         st.divider()
 
         # 入場策略
-        with st.expander("💰 入場策略參考(⚠️ 僅供參考，不構成投資建議)", expanded=True):
+        with st.expander("💰 入場策略參考（⚠️ 僅供參考，不構成投資建議）", expanded=True):
             e1,e2,e3 = st.columns(3)
             with e1:
                 st.markdown(f"""<div class="entry-card">
                     <div style="color:#66cc66;font-weight:bold">🎯 參考買入區</div>
                     <div style="margin:8px 0;color:#e2e8f0;line-height:2">
-                        保守: <b>{entry['con_buy']}</b><br>
-                        穩健: <b>{entry['mod_buy']}</b><br>
-                        積極: <b>{entry['agg_buy']}</b></div>
+                        保守：<b>{entry['con_buy']}</b><br>
+                        穩健：<b>{entry['mod_buy']}</b><br>
+                        積極：<b>{entry['agg_buy']}</b></div>
                     <div style="color:#94a3b8;font-size:11px">台股一張≈{entry['lot_cost']:,.0f}元</div>
                 </div>""",unsafe_allow_html=True)
             with e2:
                 st.markdown(f"""<div class="stop-card">
                     <div style="color:#ff6666;font-weight:bold">🛡️ 停損參考</div>
                     <div style="margin:8px 0;color:#e2e8f0;line-height:2">
-                        緊(短線): <b>{entry['sl_tight']}</b><br>
-                        標準: <b>{entry['sl_normal']}</b><br>
-                        寬(長線): <b>{entry['sl_wide']}</b></div>
+                        緊（短線）：<b>{entry['sl_tight']}</b><br>
+                        標準：<b>{entry['sl_normal']}</b><br>
+                        寬（長線）：<b>{entry['sl_wide']}</b></div>
                     <div style="color:#94a3b8;font-size:11px">跌破即出場，保護本金</div>
                 </div>""",unsafe_allow_html=True)
             with e3:
                 st.markdown(f"""<div class="target-card">
                     <div style="color:#66aaff;font-weight:bold">🎯 目標價</div>
                     <div style="margin:8px 0;color:#e2e8f0;line-height:2">
-                        T1(短): <b>{entry['tp1']}</b><br>
-                        T2(中): <b>{entry['tp2']}</b><br>
-                        T3(壓力): <b>{entry['tp3']}</b></div>
-                    <div style="color:#94a3b8;font-size:11px">風報比: {entry['rr']}:1</div>
+                        T1（短）：<b>{entry['tp1']}</b><br>
+                        T2（中）：<b>{entry['tp2']}</b><br>
+                        T3（壓力）：<b>{entry['tp3']}</b></div>
+                    <div style="color:#94a3b8;font-size:11px">風報比：{entry['rr']}:1</div>
                 </div>""",unsafe_allow_html=True)
 
         st.divider()
 
         # 圖表 + 蒙地卡羅選項
         st.markdown("### 📈 技術分析圖表")
-        show_mc = st.checkbox("🎲 開啟蒙地卡羅30日模擬(幾何布朗運動)",
+        show_mc = st.checkbox("🎲 開啟蒙地卡羅30日模擬（幾何布朗運動）",
                               help="顯示基於歷史波動率的30日價格機率錐形區間，需要額外幾秒計算")
         mc_data = monte_carlo_simulation(hist) if show_mc else None
         if mc_data:
-            st.caption(f"蒙地卡羅參數: 日均報酬率={mc_data['mu']:.4f}，日波動率σ={mc_data['sigma']:.4f}，模擬2000條路徑")
+            st.caption(f"蒙地卡羅參數：日均報酬率={mc_data['mu']:.4f}，日波動率σ={mc_data['sigma']:.4f}，模擬2000條路徑")
 
-        # 買入標記(從持股記錄)
+        # 買入標記（從持股記錄）
         buy_markers = []
         if sym in st.session_state.portfolio:
             pd2 = st.session_state.portfolio[sym]
@@ -1521,28 +1508,28 @@ with TABS[0]:
             st.plotly_chart(build_mc_standalone(mc_data,sym),use_container_width=True)
             p=mc_data["pcts"]
             mc1,mc2,mc3 = st.columns(3)
-            mc1.metric("30日樂觀預估(95%上界)",f"{round(p['p97'][-1],2)}",
+            mc1.metric("30日樂觀預估（95%上界）",f"{round(p['p97'][-1],2)}",
                        delta=f"{round((p['p97'][-1]-mc_data['last'])/mc_data['last']*100,1)}%",
                        delta_color="inverse")
             mc2.metric("30日中位數預估",f"{round(p['p50'][-1],2)}",
                        delta=f"{round((p['p50'][-1]-mc_data['last'])/mc_data['last']*100,1)}%",
                        delta_color="inverse")
-            mc3.metric("30日悲觀預估(95%下界)",f"{round(p['p02'][-1],2)}",
+            mc3.metric("30日悲觀預估（95%下界）",f"{round(p['p02'][-1],2)}",
                        delta=f"{round((p['p02'][-1]-mc_data['last'])/mc_data['last']*100,1)}%",
                        delta_color="inverse")
             st.caption("⚠️ 蒙地卡羅僅基於歷史波動率，無法預測突發事件。黑天鵝事件不在模型假設內。")
 
         st.divider()
 
-        # AI 三方辯論(核心功能)
-        st.markdown("### [AI] AI 三方辯論分析")
+        # AI 三方辯論（核心功能）
+        st.markdown("### 🤖 AI 三方辯論分析")
         st.markdown(f"""
         <div style="background:#1e1e2e;border-radius:10px;padding:12px;margin:8px 0;border:1px solid #3a3a5e">
             <b>🔴 多頭代理人</b> vs <b>🟢 空頭代理人</b> → <b>🟣 CIO裁判最終裁決</b><br>
             <span style="color:#64748b;font-size:12px">三個AI代理人從不同角度辯論，CIO根據「{macro_regime}」宏觀制度加減分後做出最終裁決</span>
         </div>""",unsafe_allow_html=True)
 
-        if st.button("⚔️ 啟動三方辯論(約90秒)",type="primary",key="debate_btn"):
+        if st.button("⚔️ 啟動三方辯論（約90秒）",type="primary",key="debate_btn"):
             with st.spinner("🔴 多頭代理人搜尋中..."):
                 try:
                     bull_rpt,bear_rpt,judge_rpt = ai_three_agent_debate(
@@ -1552,7 +1539,7 @@ with TABS[0]:
                         ["🔴 多頭論點","🟢 空頭論點","🟣 CIO最終裁決"])
 
                     with debate_tab1:
-                        st.markdown(f'<div class="bull-card"><b>🔴 多頭代理人(Permabull Agent)</b></div>',
+                        st.markdown(f'<div class="bull-card"><b>🔴 多頭代理人（Permabull Agent）</b></div>',
                                     unsafe_allow_html=True)
                         secs=bull_rpt.split("\n## ")
                         st.markdown(secs[0])
@@ -1562,7 +1549,7 @@ with TABS[0]:
                                 st.markdown(lines[1] if len(lines)>1 else "")
 
                     with debate_tab2:
-                        st.markdown(f'<div class="bear-card"><b>🟢 空頭代理人(Ruthless Bear Agent)</b></div>',
+                        st.markdown(f'<div class="bear-card"><b>🟢 空頭代理人（Ruthless Bear Agent）</b></div>',
                                     unsafe_allow_html=True)
                         secs=bear_rpt.split("\n## ")
                         st.markdown(secs[0])
@@ -1572,7 +1559,7 @@ with TABS[0]:
                                 st.markdown(lines[1] if len(lines)>1 else "")
 
                     with debate_tab3:
-                        st.markdown(f'<div class="judge-card"><b>🟣 CIO最終裁決(宏觀制度: {macro_regime})</b></div>',
+                        st.markdown(f'<div class="judge-card"><b>🟣 CIO最終裁決（宏觀制度：{macro_regime}）</b></div>',
                                     unsafe_allow_html=True)
                         secs=judge_rpt.split("\n## ")
                         st.markdown(secs[0])
@@ -1587,7 +1574,7 @@ with TABS[0]:
                                 with st.expander(f"## {lines[0]}",expanded=True):
                                     st.markdown(lines[1] if len(lines)>1 else "")
                 except Exception as e:
-                    st.error(f"❌ AI 辯論失敗: {str(e)}")
+                    st.error(f"❌ AI 辯論失敗：{str(e)}")
 
         st.divider()
         st.warning("⚠️ 本系統所有分析與建議**僅供學習參考**，不構成任何投資建議。股市有風險，請自行判斷。")
@@ -1611,7 +1598,7 @@ with TABS[0]:
             st.dataframe(raw_df,use_container_width=True,hide_index=True)
 
 # ══════════════════════════════════════════════
-# TAB 2: 我的資產庫
+# TAB 2：我的資產庫
 # ══════════════════════════════════════════════
 with TABS[1]:
     if not st.session_state.logged_in:
@@ -1631,7 +1618,7 @@ with TABS[1]:
             st.write(""); st.write("")
             p_btn=st.button("📊 計算",use_container_width=True,type="primary",key="pf_calc")
 
-        # 💡 修復 Bug 1: 用 session_state 記住計算狀態，避免按按鈕後消失
+        # 💡 修復 Bug 1：用 session_state 記住計算狀態，避免按按鈕後消失
         if "show_pf_calc" not in st.session_state:
             st.session_state.show_pf_calc = False
         
@@ -1649,7 +1636,7 @@ with TABS[1]:
                 tc=round(pc_*pn_,0); cv=round(cp_*pn_,0)
                 hd=(date.today()-pd_).days; ann=round(pct_v/max(hd,1)*365,2)
                 co_n=(pi_ or {}).get("longName") or ps_sym
-                st.subheader(f"📌 {co_n}({ps_sym})")
+                st.subheader(f"📌 {co_n}（{ps_sym}）")
 
                 mc1,mc2,mc3,mc4,mc5=st.columns(5)
                 mc1.metric("💰 現價",cp_)
@@ -1663,28 +1650,28 @@ with TABS[1]:
                 ico="📈 獲利中" if pct_v>=0 else "📉 虧損中"
                 st.markdown(f"""
                 <div style="background:{clr};border-radius:12px;padding:14px;margin:8px 0;border:1px solid {bdr}">
-                    <h3 style="margin:0;color:{bdr}">{ico} {abs(pnl):,.0f}元({pct_v:+.2f}%)</h3>
+                    <h3 style="margin:0;color:{bdr}">{ico}　{abs(pnl):,.0f}元（{pct_v:+.2f}%）</h3>
                     <p style="color:#94a3b8;margin:5px 0 0;line-height:1.8">
-                        成本: {pc_}×{pn_:.0f}股＝{tc:,.0f}元 現值: {cp_}×{pn_:.0f}股＝{cv:,.0f}元<br>
-                        每股{'獲利' if pct_v>=0 else '虧損'}: {cp_-pc_:+.2f}元 持有{hd}天 年化: {ann:+.1f}% 台股約{pn_/1000:.1f}張
+                        成本：{pc_}×{pn_:.0f}股＝{tc:,.0f}元　現值：{cp_}×{pn_:.0f}股＝{cv:,.0f}元<br>
+                        每股{'獲利' if pct_v>=0 else '虧損'}：{cp_-pc_:+.2f}元　持有{hd}天　年化：{ann:+.1f}%　台股約{pn_/1000:.1f}張
                     </p>
                 </div>""",unsafe_allow_html=True)
 
                 # AI覆盤教練
                 if api_key:
-                    if st.button("[AI] AI交易覆盤教練",key="review_btn",type="primary"):
+                    if st.button("🤖 AI交易覆盤教練",key="review_btn",type="primary"):
                         _h2,_,_=fetch_data(ps_sym,"6mo")
                         if _h2 is not None:
                             _ind2=calc_indicators(_h2)
                             _en2=calc_entry(_ind2,_h2)
-                            # 買入當日指標(重建)
+                            # 買入當日指標（重建）
                             try:
                                 _h2_idx=_h2.copy(); _h2_idx.index=pd.to_datetime(_h2_idx.index)
                                 if _h2_idx.index.tz: _h2_idx.index=_h2_idx.index.tz_localize(None)
                                 buy_dt=pd.to_datetime(str(pd_))
                                 near=_h2_idx.index[_h2_idx.index.searchsorted(buy_dt)]
                                 row_buy=_h2_idx.loc[near]
-                                ind_at_buy_str=f"當日收盤: {row_buy['Close']:.2f}，開盤: {row_buy['Open']:.2f}，成交量: {row_buy['Volume']:,.0f}"
+                                ind_at_buy_str=f"當日收盤：{row_buy['Close']:.2f}，開盤：{row_buy['Open']:.2f}，成交量：{row_buy['Volume']:,.0f}"
                             except: ind_at_buy_str="買入當日數據無法重建"
                             with st.spinner("AI評估中..."):
                                 try:
@@ -1716,7 +1703,7 @@ with TABS[1]:
                                 
                                 new_cost = round(avg_cost, 2)
                                 new_shares = total_shares
-                                success_msg = f"✅ 已加碼合併！新均價: {new_cost}，總計: {new_shares} 股"
+                                success_msg = f"✅ 已加碼合併！新均價：{new_cost}，總計：{new_shares} 股"
                             else:
                                 new_cost = pc_
                                 new_shares = pn_
@@ -1735,8 +1722,8 @@ with TABS[1]:
                             st.session_state.show_pf_calc = False # 移除後關閉試算卡片
                             st.rerun()
 
-        # 💡 修復 Bug 2: 把持股總覽「移出」計算條件外，確保只要有庫存就一定顯示
-        # 💡 方案 B: 動態加總與分筆刪除區塊
+        # 💡 修復 Bug 2：把持股總覽「移出」計算條件外，確保只要有庫存就一定顯示
+        # 💡 方案 B：動態加總與分筆刪除區塊
         if st.session_state.portfolio:
             st.divider()
             st.markdown("### 📋 持股組合總覽")
@@ -1744,7 +1731,7 @@ with TABS[1]:
             pr_rows = []; tc_all = 0; cv_all = 0
             
             for sym, entries in st.session_state.portfolio.items():
-                # 防呆: 確保 entries 是列表(如果抓到舊版資料，自動包裝成列表)
+                # 防呆：確保 entries 是列表（如果抓到舊版資料，自動包裝成列表）
                 if isinstance(entries, dict): entries = [entries]
                 
                 # 動態加總 list 裡面的股數和成本，計算精準均價
@@ -1785,11 +1772,11 @@ with TABS[1]:
 
                 # AI 投資長 CIO
                 if api_key:
-                    if st.button("🏦 AI投資長(CIO)組合審查", type="primary", key="cio_btn"):
+                    if st.button("🏦 AI投資長（CIO）組合審查", type="primary", key="cio_btn"):
                         port_str = "\n".join([f"- {r['代號']}: 成本{r['均價']} 現價{r['現價']} 損益{r['損益%']} 板塊{r.get('板塊','未知')}" for r in pr_rows])
                         sec_count = {}
                         for r in pr_rows: sec_count[r.get("板塊","其他")] = sec_count.get(r.get("板塊","其他"), 0) + 1
-                        with st.spinner("AI投資長審查中(含即時搜尋)..."):
+                        with st.spinner("AI投資長審查中（含即時搜尋）..."):
                             try:
                                 cio_rpt = ai_portfolio_cio(port_str, str(sec_count), api_key)
                                 secs = cio_rpt.split("\n## ")
@@ -1800,7 +1787,7 @@ with TABS[1]:
                                         st.markdown(lines[1] if len(lines) > 1 else "")
                             except Exception as e: st.error(str(e)[:80])
 
-            # 👇 方案 B: 雙層選單分筆刪除功能
+            # 👇 方案 B：雙層選單分筆刪除功能
             st.divider()
             st.markdown("#### 🗑️ 刪除特定買入記錄")
             del_c1, del_c2 = st.columns([2, 2])
@@ -1848,7 +1835,7 @@ with TABS[1]:
                 chg_str=f"{'🔴+' if (ch_ or 0)>=0 else '🟢'}{ch_:.2f}%" if ch_ is not None else "-"
                 wrows.append({"代號":s,"現價":p_ or "N/A","今日":chg_str,"警報":"🔔" if s in st.session_state.alerts else ""})
             st.dataframe(pd.DataFrame(wrows),use_container_width=True,hide_index=True)
-            st.markdown("**快速分析: **")
+            st.markdown("**快速分析：**")
             bcols=st.columns(min(len(st.session_state.watchlist),6))
             for i,s in enumerate(st.session_state.watchlist[:6]):
                 if bcols[i].button(f"📊{s}",key=f"wa_{i}",use_container_width=True):
@@ -1865,7 +1852,7 @@ with TABS[1]:
                     st.session_state.watchlist=[]; st.session_state.confirm_clear_watch=False; st.rerun()
                 if cc2.button("❌取消",key="cw_can"): st.session_state.confirm_clear_watch=False; st.rerun()
 
-    # ── 交易記錄(已平倉)──
+    # ── 交易記錄（已平倉）──
     with asset_tab3:
         st.markdown("### 📋 已平倉交易記錄")
         st.caption("記錄已出場的交易，用於計算績效與行為分析")
@@ -1888,7 +1875,7 @@ with TABS[1]:
                     db_add_trade(st.session_state.user_id if st.session_state.logged_in else "local",
                                  ts_sym,"LONG",t_ep,t_xp,t_sh,str(t_ed),str(t_xd),t_note)
                     st.session_state.trade_history=db_load_trades(st.session_state.user_id) if st.session_state.logged_in else st.session_state.trade_history+[{"symbol":ts_sym,"direction":"LONG","entry_price":t_ep,"exit_price":t_xp,"shares":t_sh,"entry_date":str(t_ed),"exit_date":str(t_xd),"pnl_amount":pnl_a,"pnl_pct":pnl_p,"note":t_note}]
-                    st.success(f"✅ 已記錄 {ts_sym}，損益: {pnl_a:+,.0f}元({pnl_p:+.2f}%)")
+                    st.success(f"✅ 已記錄 {ts_sym}，損益：{pnl_a:+,.0f}元（{pnl_p:+.2f}%）")
 
         # 顯示記錄
         trades = st.session_state.trade_history
@@ -1922,24 +1909,24 @@ with TABS[1]:
                 if cc2.button("❌取消",key="ct_can"): st.session_state.confirm_clear_trades=False; st.rerun()
 
 # ══════════════════════════════════════════════
-# TAB 3: 選股 + DCA 回測
+# TAB 3：選股 + DCA 回測
 # ══════════════════════════════════════════════
 with TABS[2]:
     scr_tab, dca_tab = st.tabs(["🔎 技術面選股器","⏳ 定期定額回測"])
 
     with scr_tab:
         st.markdown("### 🔎 技術面選股器")
-        st.caption("設定篩選條件，從熱門股清單中找符合條件的標的(ThreadPoolExecutor 加速)")
+        st.caption("設定篩選條件，從熱門股清單中找符合條件的標的（ThreadPoolExecutor 加速）")
 
         col1,col2 = st.columns(2)
         with col1:
-            scr_rsi_lt = st.number_input("RSI <(超賣篩選)",0.0,100.0,35.0,step=5.0,help="RSI低於此值才入選，設0=不篩選")
-            scr_macd   = st.checkbox("MACD Histogram > 0(動能向上)",help="柱狀圖為正值，代表上漲動能")
-            scr_ma20   = st.checkbox("現價 > MA20(站上月線)",help="股價在20日均線上方")
+            scr_rsi_lt = st.number_input("RSI <（超賣篩選）",0.0,100.0,35.0,step=5.0,help="RSI低於此值才入選，設0=不篩選")
+            scr_macd   = st.checkbox("MACD Histogram > 0（動能向上）",help="柱狀圖為正值，代表上漲動能")
+            scr_ma20   = st.checkbox("現價 > MA20（站上月線）",help="股價在20日均線上方")
         with col2:
-            scr_rsi_gt = st.number_input("RSI >(超買篩選)",0.0,100.0,0.0,step=5.0,help="設0=不篩選")
-            scr_vol    = st.checkbox("成交量 > 1.5倍均量(放量)",help="今日成交量超過20日均量1.5倍")
-            scr_bb_lo  = st.checkbox("布林位置 < 25%(接近下軌)",help="股價接近布林下軌，超賣區域")
+            scr_rsi_gt = st.number_input("RSI >（超買篩選）",0.0,100.0,0.0,step=5.0,help="設0=不篩選")
+            scr_vol    = st.checkbox("成交量 > 1.5倍均量（放量）",help="今日成交量超過20日均量1.5倍")
+            scr_bb_lo  = st.checkbox("布林位置 < 25%（接近下軌）",help="股價接近布林下軌，超賣區域")
 
         if st.button("🔍 開始篩選",type="primary",use_container_width=True):
             hot=TW_HOT if "台股" in market else US_HOT
@@ -1956,7 +1943,7 @@ with TABS[2]:
             if scr_vol:        conditions["vol_spike"]=True
             if scr_bb_lo:      conditions["bb_near_lower"]=True
 
-            with st.spinner(f"掃描 {len(all_syms)} 支股票中(ThreadPoolExecutor加速)..."):
+            with st.spinner(f"掃描 {len(all_syms)} 支股票中（ThreadPoolExecutor加速）..."):
                 results=run_screener(all_syms,conditions)
             if results:
                 st.success(f"✅ 找到 {len(results)} 支符合條件的股票")
@@ -1972,11 +1959,11 @@ with TABS[2]:
                 st.info("😔 目前沒有股票符合篩選條件，嘗試放寬條件")
 
     with dca_tab:
-        st.markdown("### ⏳ 定期定額回測(DCA Backtester)")
-        st.info("💡 每月固定投入固定金額，用真實歷史數據模擬。ETF(如0050、SPY)最適合此策略。")
+        st.markdown("### ⏳ 定期定額回測（DCA Backtester）")
+        st.info("💡 每月固定投入固定金額，用真實歷史數據模擬。ETF（如0050、SPY）最適合此策略。")
         d1,d2,d3,d4=st.columns(4)
         with d1: dca_sym=st.text_input("代號",placeholder="如0050或SPY",key="dca_s",help="建議用ETF")
-        with d2: dca_amt=st.number_input("每月投入(元)",1000.0,1000000.0,10000.0,step=1000.0,key="dca_a",help="建議月收入10~20%")
+        with d2: dca_amt=st.number_input("每月投入（元）",1000.0,1000000.0,10000.0,step=1000.0,key="dca_a",help="建議月收入10~20%")
         with d3: dca_yr =st.selectbox("回測年限",[3,5,10,15,20],index=1,format_func=lambda x:f"{x}年",key="dca_y",help="至少5年才有意義")
         with d4:
             st.write(""); st.write("")
@@ -1999,18 +1986,18 @@ with TABS[2]:
                     <p style="color:#94a3b8;margin:8px 0 0;line-height:1.8">
                         如果從<b>{dca_yr}年前</b>每月投入<b>{dca_amt:,.0f}元</b>，總投入<b>{ti:,.0f}元</b>，
                         今天資產現值<b>{fv:,.0f}元</b>，
-                        <span style="color:{col_p};font-weight:bold">{'獲利' if profit>=0 else '虧損'} {abs(profit):,.0f}元({stats['累積報酬率']})</span><br>
-                        最大回撤<b>{stats['最大回撤MDD']}</b>: 這段期間你的資產最多曾縮水這麼多，能撐住才能享受最終報酬。
+                        <span style="color:{col_p};font-weight:bold">{'獲利' if profit>=0 else '虧損'} {abs(profit):,.0f}元（{stats['累積報酬率']}）</span><br>
+                        最大回撤<b>{stats['最大回撤MDD']}</b>：這段期間你的資產最多曾縮水這麼多，能撐住才能享受最終報酬。
                     </p>
                 </div>""",unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════
-# TAB 4: 市場總覽
+# TAB 4：市場總覽
 # ══════════════════════════════════════════════
 with TABS[3]:
-    st.markdown("### 🗺️ 板塊熱力圖(🔴漲 🟢跌，台灣色系)")
-    st.caption("方塊大小=市值，顏色=今日漲跌(ThreadPoolExecutor 批量抓取)")
-    if st.button("🔄 載入熱力圖(約30~60秒)",type="primary"):
+    st.markdown("### 🗺️ 板塊熱力圖（🔴漲 🟢跌，台灣色系）")
+    st.caption("方塊大小=市值，顏色=今日漲跌（ThreadPoolExecutor 批量抓取）")
+    if st.button("🔄 載入熱力圖（約30~60秒）",type="primary"):
         with st.spinner("批量抓取板塊數據..."):
             df_hm=fetch_heatmap_data(market)
         if not df_hm.empty:
@@ -2033,14 +2020,14 @@ with TABS[3]:
             </div>""",unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════
-# TAB 5: 交易心理診斷
+# TAB 5：交易心理診斷
 # ══════════════════════════════════════════════
 with TABS[4]:
     st.markdown("### 🧠 交易心理與行為偏誤診斷")
     st.info("""
     💡 **為什麼需要行為分析？**
     研究顯示，90%的散戶虧損不是因為不懂技術，而是**心理偏誤**導致的錯誤決策。
-    最常見的是**處置效應**: 太快賣掉賺錢的股票，卻死抱著虧損的股票不放。
+    最常見的是**處置效應**：太快賣掉賺錢的股票，卻死抱著虧損的股票不放。
     本系統分析你的交易記錄，診斷你的行為偏誤。
     """)
 
@@ -2072,10 +2059,10 @@ with TABS[4]:
             st.markdown("""
             <div style="background:#3a0000;border-radius:12px;padding:16px;margin:12px 0;
                 border:2px solid #ff3333">
-                <h3 style="color:#ff6666;margin:0">🚨 偵測到處置效應(Disposition Effect)！</h3>
+                <h3 style="color:#ff6666;margin:0">🚨 偵測到處置效應（Disposition Effect）！</h3>
                 <p style="color:#ffaaaa;margin:8px 0 0">
-                    你的數據顯示: <b>持有虧損股的時間顯著長於持有獲利股</b>。<br>
-                    這是散戶最常見的致命偏誤: 急著鎖住獲利，卻死抱著虧損股等待解套。<br>
+                    你的數據顯示：<b>持有虧損股的時間顯著長於持有獲利股</b>。<br>
+                    這是散戶最常見的致命偏誤：急著鎖住獲利，卻死抱著虧損股等待解套。<br>
                     長期下來，你的帳戶將充滿「套牢股」，而所有獲利都被你過早了結。
                 </p>
             </div>""",unsafe_allow_html=True)
@@ -2083,7 +2070,7 @@ with TABS[4]:
         # 交易記錄視覺化
         if len(trades)>=2:
             tr_viz=pd.DataFrame([{
-                "交易":f"{t.get('symbol','')}({t.get('exit_date','')})",
+                "交易":f"{t.get('symbol','')}（{t.get('exit_date','')}）",
                 "損益%":t.get("pnl_pct",0),
                 "持有天數":max((date.fromisoformat(t.get("exit_date","2000-01-01"))-date.fromisoformat(t.get("entry_date","2000-01-01"))).days,0) if t.get("exit_date") and t.get("entry_date") else 0,
             } for t in trades])
@@ -2091,7 +2078,7 @@ with TABS[4]:
                 color="損益%",
                 color_continuous_scale=[(0.0,TW_DOWN),(0.5,"#888888"),(1.0,TW_UP)],
                 color_continuous_midpoint=0,
-                title="交易散佈圖: 持有天數 vs 損益(🔴獲利 🟢虧損)",
+                title="交易散佈圖：持有天數 vs 損益（🔴獲利 🟢虧損）",
                 template=DARK)
             fig_tr.add_hline(y=0,line_dash="dash",line_color="rgba(255,255,255,0.3)")
             fig_tr.update_layout(height=400)
@@ -2101,7 +2088,7 @@ with TABS[4]:
         if api_key:
             if st.button("🧠 AI 深度行為偏誤診斷",type="primary"):
                 trades_summary="\n".join([
-                    f"- {t.get('symbol','')}: 買入{t.get('entry_price',0)} 賣出{t.get('exit_price',0)} 損益{t.get('pnl_pct',0):+.1f}% 持有{max((date.fromisoformat(t.get('exit_date','2000-01-01'))-date.fromisoformat(t.get('entry_date','2000-01-01'))).days,0) if t.get('exit_date') and t.get('entry_date') else 0}天"
+                    f"- {t.get('symbol','')}：買入{t.get('entry_price',0)} 賣出{t.get('exit_price',0)} 損益{t.get('pnl_pct',0):+.1f}% 持有{max((date.fromisoformat(t.get('exit_date','2000-01-01'))-date.fromisoformat(t.get('entry_date','2000-01-01'))).days,0) if t.get('exit_date') and t.get('entry_date') else 0}天"
                     for t in trades[:10]
                 ])
                 with st.spinner("AI分析行為模式中..."):
@@ -2120,8 +2107,8 @@ with TABS[4]:
 # ══════════════════════════════════════════════
 st.divider()
 st.caption(
-    "📈 股市小白分析系統 Pro V2.0 | "
-    "AI三方辯論 × 蒙地卡羅GBM × 行為偏誤診斷 × 15項指標 × 帳號雲端記憶 | "
-    "🔴紅漲🟢跌(台灣色系)| "
+    "📈 股市小白分析系統 Pro V2.0 ｜ "
+    "AI三方辯論 × 蒙地卡羅GBM × 行為偏誤診斷 × 15項指標 × 帳號雲端記憶 ｜ "
+    "🔴紅漲🟢跌（台灣色系）｜ "
     "⚠️ 所有內容僅供學習參考，不構成任何投資建議"
 )
