@@ -44,7 +44,7 @@ except Exception:
     pass
 
 # ══════════════════════════════════════════════
-# 3. CSS（台灣色系：紅漲綠跌）
+# 3. CSS（台灣色系:紅漲綠跌）
 # ══════════════════════════════════════════════
 st.markdown("""
 <style>
@@ -277,7 +277,7 @@ GLOSSARY = {
     "MDD最大回撤":"從最高點到最低點的最大跌幅，衡量最壞情況。",
     "蒙地卡羅":"用歷史波動率隨機模擬未來數千條可能路徑，顯示機率區間。",
     "VIX恐慌指數":">30=市場極度恐慌；<15=市場過度樂觀。",
-    "處置效應":"散戶常見心理偏誤：太早賣出獲利股，太晚出清虧損股。",
+    "處置效應":"散戶常見心理偏誤:太早賣出獲利股，太晚出清虧損股。",
     "總體宏觀制度":"指當前全球經濟所處的大環境，如通膨衰退、復甦成長等，影響所有資產走向。",
 }
 MACRO_REGIMES = ["未知","成長擴張（Risk-On）","通膨衰退（Stagflation）","衰退（Risk-Off）","復甦反彈（Early Cycle）","流動性危機"]
@@ -326,7 +326,7 @@ def fetch_data(symbol: str, period: str):
             if h.empty: return None, None, "查無此代號"
             return h, info, None
         except Exception as e:
-            if i==2: return None, None, f"抓取失敗：{str(e)[:50]}"
+            if i==2: return None, None, f"抓取失敗:{str(e)[:50]}"
             time.sleep(1)
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -727,13 +727,13 @@ def call_ai(api_key: str, prompt: str, use_search: bool = False) -> str:
                 resp = client.models.generate_content(model=mid,contents=prompt)
             tag = "＋🔍即時搜尋" if use_search else ""
             ts  = datetime.now().strftime("%Y-%m-%d %H:%M")
-            return f"> 🤖 {mname}{tag}　｜　{ts}\n\n{resp.text}"
+            return f"> [AI] {mname}{tag} | {ts}\n\n{resp.text}"
         except Exception as e:
             err=str(e)
             if any(k in err for k in ["quota","429","RESOURCE_EXHAUSTED","404","not found"]):
                 last_err=err[:80]; continue
             raise
-    raise Exception(f"所有模型均無法使用：{last_err}")
+    raise Exception(f"所有模型均無法使用:{last_err}")
 
 # ══════════════════════════════════════════════
 # 19. AI Prompts（三方辯論 + 宏觀制度過濾）
@@ -742,37 +742,37 @@ def ai_macro_regime(api_key: str) -> str:
     """先確認當前宏觀制度"""
     prompt = """請即時搜尋並判斷當前（本週）全球總體經濟所處的宏觀制度（Macro Regime）。
 
-從以下選項選擇最符合的一個並說明理由（50字以內）：
+從以下選項選擇最符合的一個並說明理由（50字以內）:
 - 成長擴張（Risk-On）
 - 通膨衰退（Stagflation）
 - 衰退（Risk-Off）
 - 復甦反彈（Early Cycle）
 - 流動性危機
 
-格式（嚴格遵守）：
-**制度：** [選項名稱]
-**理由：** [50字以內說明，包含聯準會動向、GDP、通膨數據]
+格式（嚴格遵守）:
+**制度:** [選項名稱]
+**理由:** [50字以內說明，包含聯準會動向、GDP、通膨數據]
 
 禁止廢話。繁體中文。"""
     return call_ai(api_key, prompt, use_search=True)
 
 def ai_three_agent_debate(ind, info, sym, api_key, entry, score, macro_regime) -> tuple:
-    """三方辯論：多頭 vs 空頭 vs CIO裁判"""
+    """三方辯論:多頭 vs 空頭 vs CIO裁判"""
     co  = info.get("longName") or info.get("shortName") or sym
     atr = entry["atr"]
     bull_range = f"{round(ind['price']+1.5*atr,2)}"
     bear_range = f"{round(ind['price']-1.5*atr,2)}"
 
     base_data = f"""
-股票：{co}（{sym}）｜現價：{ind['price']}｜今日：{ind['change_pct']}%｜月：{ind['change_1m']}%
-評分：{score['total']}/100（{score['grade']}）｜狀態：{ind['status']}
+股票:{co}（{sym}）｜現價:{ind['price']}｜今日:{ind['change_pct']}%｜月:{ind['change_1m']}%
+評分:{score['total']}/100（{score['grade']}）｜狀態:{ind['status']}
 MA5={ind['ma5']} MA20={ind['ma20']} MA60={ind['ma60']}
 RSI={ind['rsi']} StochK={ind['stoch_k']} Williams%R={ind['williams_r']}
 MACD_H={ind['macd_hist']} ATR={atr} OBV={'↑' if ind['obv']>0 else '↓'}
 布林位置={ind['bb_pct']:.0f}% {ind['vol_desc']} 52W位置={ind['position_52w']}%
 支撐={entry['sup1']}/{entry['sup2']} 壓力={entry['res1']}/{entry['res2']}
 PE={info.get('trailingPE','N/A')} PB={info.get('priceToBook','N/A')} Beta={info.get('beta','N/A')}
-**當前宏觀制度：{macro_regime}**
+**當前宏觀制度:{macro_regime}**
     """
 
     # ── 多頭代理人 ──
@@ -780,19 +780,19 @@ PE={info.get('trailingPE','N/A')} PB={info.get('priceToBook','N/A')} Beta={info.
 
 {base_data}
 
-宏觀制度懲罰/獎勵規則：
+宏觀制度懲罰/獎勵規則:
 - 若制度為「成長擴張」或「復甦反彈」→ 多頭論點信心加成+20%
 - 若制度為「通膨衰退」或「衰退」→ 你的論點需特別強調防禦性與超賣反彈邏輯
 - 若制度為「流動性危機」→ 你必須承認大環境不利，但找個股alpha
 
-請即時搜尋最新正面消息後，輸出（禁止廢話、條列式、繁體中文）：
+請即時搜尋最新正面消息後，輸出（禁止廢話、條列式、繁體中文）:
 
 ## 🔴 多頭論點（Permabull）
-- **核心催化劑**：（搜尋最新正面消息，條列3點）
-- **技術面多頭證據**：（從15項指標中找最強的3個多頭訊號）
-- **ATR多頭情境**：明日若多方主導，目標 **{bull_range}**（說明技術依據）
-- **宏觀制度加分**：在「{macro_regime}」環境下，為什麼這支股票仍有機會？
-- **多頭信心評級**：⬛/5（說明理由）
+- **核心催化劑**:（搜尋最新正面消息，條列3點）
+- **技術面多頭證據**:（從15項指標中找最強的3個多頭訊號）
+- **ATR多頭情境**:明日若多方主導，目標 **{bull_range}**（說明技術依據）
+- **宏觀制度加分**:在「{macro_regime}」環境下，為什麼這支股票仍有機會？
+- **多頭信心評級**:⬛/5（說明理由）
 
 不得提任何空頭觀點。禁止「一定」「保證」「必漲」。"""
 
@@ -801,20 +801,20 @@ PE={info.get('trailingPE','N/A')} PB={info.get('priceToBook','N/A')} Beta={info.
 
 {base_data}
 
-宏觀制度懲罰/獎勵規則：
+宏觀制度懲罰/獎勵規則:
 - 若制度為「通膨衰退」或「衰退」或「流動性危機」→ 空頭論點信心加成+20%
 - 若制度為「成長擴張」→ 你需要找個股特定風險和技術面超買訊號
 - 所有宏觀制度下，你都必須指出聯準會政策風險和地緣政治黑天鵝
 
-請即時搜尋最新負面消息後，輸出（禁止廢話、條列式、繁體中文）：
+請即時搜尋最新負面消息後，輸出（禁止廢話、條列式、繁體中文）:
 
 ## 🟢 空頭論點（Ruthless Bear）
-- **核心威脅**：（搜尋最新負面消息/風險，條列3點）
-- **技術面空頭證據**：（從15項指標中找最強的3個空頭訊號）
-- **ATR空頭情境**：明日若空方主導，目標 **{bear_range}**（說明技術依據）
-- **宏觀制度懲罰**：在「{macro_regime}」環境下，為什麼這支股票面臨更大風險？
-- **黑天鵝事件**：最可能摧毀多頭論點的1個具體風險
-- **空頭信心評級**：⬛/5
+- **核心威脅**:（搜尋最新負面消息/風險，條列3點）
+- **技術面空頭證據**:（從15項指標中找最強的3個空頭訊號）
+- **ATR空頭情境**:明日若空方主導，目標 **{bear_range}**（說明技術依據）
+- **宏觀制度懲罰**:在「{macro_regime}」環境下，為什麼這支股票面臨更大風險？
+- **黑天鵝事件**:最可能摧毀多頭論點的1個具體風險
+- **空頭信心評級**:⬛/5
 
 不得提任何多頭觀點。禁止「一定」「保證」「必跌」。"""
 
@@ -823,30 +823,30 @@ PE={info.get('trailingPE','N/A')} PB={info.get('priceToBook','N/A')} Beta={info.
 
 {base_data}
 
-**宏觀制度裁決規則（必須執行）：**
+**宏觀制度裁決規則（必須執行）:**
 - 「成長擴張」→ 給多頭+10%信心加成
 - 「通膨衰退/衰退」→ 給空頭+15%信心加成，要求更高的安全邊際
 - 「流動性危機」→ 直接評為觀望，除非有極強防禦性
 - 「復甦反彈」→ 給多頭+5%，但提醒反彈幅度有限
 
-ATR計算參數：現價={ind['price']}，ATR={atr}
-樂觀情境：{round(ind['price']+1.5*atr,2)}，悲觀情境：{round(ind['price']-1.5*atr,2)}，中性：{round(ind['price']-0.5*atr,2)}～{round(ind['price']+0.5*atr,2)}
+ATR計算參數:現價={ind['price']}，ATR={atr}
+樂觀情境:{round(ind['price']+1.5*atr,2)}，悲觀情境:{round(ind['price']-1.5*atr,2)}，中性:{round(ind['price']-0.5*atr,2)}～{round(ind['price']+0.5*atr,2)}
 
-輸出（禁止廢話、條列式、繁體中文）：
+輸出（禁止廢話、條列式、繁體中文）:
 
 ## 🟣 CIO最終裁決
-- **多空力道對比**：多頭論點強度X/10 vs 空頭論點強度Y/10
-- **宏觀制度影響**：在「{macro_regime}」環境下的最終加減分評估
-- **最終方向裁決**：偏多/偏空/中性觀望（必須明確，附理由）
-- **明日精準預測**（嚴格基於ATR={atr}，不超過±3倍ATR）：
-  - 最可能情境：___～___ 
-  - 關鍵多方守位：**{entry['sup1']}**（跌破=空方勝）
-  - 關鍵空方突破：**{entry['res1']}**（帶量突破=多方勝）
-- **投資建議**（⚠️僅供參考不構成投資建議）：
-  - 穩健買入區：{entry['mod_buy']}｜停損：{entry['sl_normal']}｜T1：{entry['tp1']}｜風報比：{entry['rr']}:1
+- **多空力道對比**:多頭論點強度X/10 vs 空頭論點強度Y/10
+- **宏觀制度影響**:在「{macro_regime}」環境下的最終加減分評估
+- **最終方向裁決**:偏多/偏空/中性觀望（必須明確，附理由）
+- **明日精準預測**（嚴格基於ATR={atr}，不超過±3倍ATR）:
+  - 最可能情境:___～___ 
+  - 關鍵多方守位:**{entry['sup1']}**（跌破=空方勝）
+  - 關鍵空方突破:**{entry['res1']}**（帶量突破=多方勝）
+- **投資建議**（⚠️僅供參考不構成投資建議）:
+  - 穩健買入區:{entry['mod_buy']}｜停損:{entry['sl_normal']}｜T1:{entry['tp1']}｜風報比:{entry['rr']}:1
   - 台股一張≈{entry['lot_cost']:,.0f}元
-- **信心評級**：⬛/5（說明）
-- **新手一句話**：（用最簡單的語言告訴小白現在應該怎麼對待這支股票）
+- **信心評級**:⬛/5（說明）
+- **新手一句話**:（用最簡單的語言告訴小白現在應該怎麼對待這支股票）
 
 禁止「一定」「保證」「必漲」「必跌」。"""
 
@@ -861,9 +861,9 @@ def ai_portfolio_cio(portfolio_data: str, sector_data: str, api_key: str) -> str
 
 {portfolio_data}
 
-板塊分佈：{sector_data}
+板塊分佈:{sector_data}
 
-請即時搜尋各持股最新動態後，輸出（繁體中文、條列式、禁止廢話）：
+請即時搜尋各持股最新動態後，輸出（繁體中文、條列式、禁止廢話）:
 
 ## 🏦 組合健康診斷
 - 板塊集中度風險（某板塊>40%則視為過度集中）
@@ -871,7 +871,7 @@ def ai_portfolio_cio(portfolio_data: str, sector_data: str, api_key: str) -> str
 - Beta加權組合波動度估算
 
 ## ⚔️ 汰弱留強建議
-（對每支持股給出：繼續持有/減碼/立即清倉，附一句話理由）
+（對每支持股給出:繼續持有/減碼/立即清倉，附一句話理由）
 
 ## 🔄 組合優化建議
 - 應該移除的1~2支最弱標的（附具體理由）
@@ -887,15 +887,15 @@ def ai_portfolio_cio(portfolio_data: str, sector_data: str, api_key: str) -> str
 def ai_entry_critique(sym, co, buy_price, buy_date, ind_at_buy, current_price, api_key) -> str:
     prompt = f"""你是一位無情的交易教練，對以下買入點進行事後覆盤（Post-Mortem）。
 
-**交易資訊：**
-股票：{co}（{sym}）
-買入日期：{buy_date}｜買入價：{buy_price}｜現價：{current_price}
-損益：{round((current_price-buy_price)/max(buy_price,0.01)*100,2):+.2f}%
+**交易資訊:**
+股票:{co}（{sym}）
+買入日期:{buy_date}｜買入價:{buy_price}｜現價:{current_price}
+損益:{round((current_price-buy_price)/max(buy_price,0.01)*100,2):+.2f}%
 
-**買入當日技術面（重建）：**
+**買入當日技術面（重建）:**
 {ind_at_buy}
 
-請輸出（繁體中文、條列式、禁止廢話）：
+請輸出（繁體中文、條列式、禁止廢話）:
 
 ## 🔬 買點覆盤診斷
 - 買入時技術面評估（合理/偏早/偏晚/嚴重錯誤）
@@ -903,9 +903,9 @@ def ai_entry_critique(sym, co, buy_price, buy_date, ind_at_buy, current_price, a
 - 如果用現在的系統評分，當時可能得幾分？
 
 ## 🎯 當前持股處置建議
-**明確選擇一個（必須）：A.繼續持有 / B.移動停利 / C.停損出場**
+**明確選擇一個（必須）:A.繼續持有 / B.移動停利 / C.停損出場**
 - 選擇理由（技術面為主，3點）
-- 具體操作：止損價/移動停利位/加碼條件
+- 具體操作:止損價/移動停利位/加碼條件
 
 ## 🧠 心理偏誤提醒
 （根據此交易，診斷可能存在的心理偏誤，如處置效應、確認偏誤等）
@@ -917,45 +917,45 @@ def ai_bias_warning(bias_data: dict, trades_summary: str, api_key: str) -> str:
     disposition = bias_data.get("disposition_effect", False)
     prompt = f"""你是行為財務學專家，分析以下投資人的交易記錄，診斷心理偏誤。
 
-交易統計：
-- 總交易次數：{bias_data.get('win_count',0)+bias_data.get('lose_count',0)}
-- 勝率：{bias_data.get('win_rate',0)}%
-- 平均獲利幅度：+{bias_data.get('avg_win_pct',0):.2f}%
-- 平均虧損幅度：-{bias_data.get('avg_loss_pct',0):.2f}%
-- 平均持有獲利股天數：{bias_data.get('avg_win_days',0):.0f}天
-- 平均持有虧損股天數：{bias_data.get('avg_loss_days',0):.0f}天
-- 處置效應診斷：{'⚠️ 是（持虧損股時間顯著長於持獲利股）' if disposition else '✅ 未明顯發現'}
+交易統計:
+- 總交易次數:{bias_data.get('win_count',0)+bias_data.get('lose_count',0)}
+- 勝率:{bias_data.get('win_rate',0)}%
+- 平均獲利幅度:+{bias_data.get('avg_win_pct',0):.2f}%
+- 平均虧損幅度:-{bias_data.get('avg_loss_pct',0):.2f}%
+- 平均持有獲利股天數:{bias_data.get('avg_win_days',0):.0f}天
+- 平均持有虧損股天數:{bias_data.get('avg_loss_days',0):.0f}天
+- 處置效應診斷:{'⚠️ 是（持虧損股時間顯著長於持獲利股）' if disposition else '✅ 未明顯發現'}
 
-近期交易記錄：
+近期交易記錄:
 {trades_summary}
 
-請輸出（繁體中文、條列式）：
+請輸出（繁體中文、條列式）:
 
 ## 🧠 行為偏誤診斷報告
-{'## ⚠️ 嚴重警告：偵測到處置效應（Disposition Effect）！' if disposition else ''}
-- 你的交易數據顯示：（說明具體數字問題）
+{'## ⚠️ 嚴重警告:偵測到處置效應（Disposition Effect）！' if disposition else ''}
+- 你的交易數據顯示:（說明具體數字問題）
 - 最可能的3個心理偏誤（附白話解釋）
 - 這樣的行為模式，長期會如何影響報酬？
 
 ## 💊 矯正方案
 - 3個具體的交易紀律改善方法
-- 建議設立的強制規則（如：任何交易最大虧損不超過X%）
+- 建議設立的強制規則（如:任何交易最大虧損不超過X%）
 
 禁止廢話開場白。"""
     return call_ai(api_key, prompt, use_search=False)
 
 # ══════════════════════════════════════════════
-# 20. 圖表（台灣色系：紅漲綠跌）
+# 20. 圖表（台灣色系:紅漲綠跌）
 # ══════════════════════════════════════════════
 DARK = "plotly_dark"
-TW_UP   = "#ff3333"   # 台灣：紅色=漲
-TW_DOWN = "#22cc44"   # 台灣：綠色=跌
+TW_UP   = "#ff3333"   # 台灣:紅色=漲
+TW_DOWN = "#22cc44"   # 台灣:綠色=跌
 
 def build_main_chart(hist, ind, entry, sym, mc_data=None, buy_markers=None):
-    """主圖表：K線+均線+布林+蒙地卡羅+買入標記"""
+    """主圖表:K線+均線+布林+蒙地卡羅+買入標記"""
     idx = hist.index
     rows = 4; heights = [0.50,0.18,0.17,0.15]
-    titles = ["K線+均線+布林（台灣色系：紅漲綠跌）","成交量","RSI+Stochastic","MACD"]
+    titles = ["K線+均線+布林（台灣色系:紅漲綠跌）","成交量","RSI+Stochastic","MACD"]
     if mc_data:
         rows=5; heights=[0.42,0.18,0.15,0.13,0.12]
         titles.append("蒙地卡羅模擬（30日錐形區間）")
@@ -1217,7 +1217,7 @@ with st.sidebar:
                     if r in regime_rpt:
                         st.session_state.macro_regime=r
                         macro_regime=r; break
-                st.success(f"✅ 制度偵測完成：{st.session_state.macro_regime}")
+                st.success(f"✅ 制度偵測完成:{st.session_state.macro_regime}")
                 with st.expander("查看AI制度分析"): st.markdown(regime_rpt)
             except Exception as e: st.error(str(e)[:50])
 
@@ -1280,11 +1280,11 @@ if mkt:
         chg=row["漲跌%"]
         col.metric(row["名稱"],str(row["現值"]),
             f"{'▲' if chg>=0 else '▼'}{abs(chg):.2f}%",
-            delta_color="inverse")  # 台灣色系：inverse
+            delta_color="inverse")  # 台灣色系:inverse
 
 # 最近查詢
 if st.session_state.recent_searches:
-    st.markdown("**🕐 最近查詢：**")
+    st.markdown("**🕐 最近查詢:**")
     rc=st.columns(min(len(st.session_state.recent_searches),8))
     for i,rs in enumerate(st.session_state.recent_searches):
         if rc[i].button(rs,key=f"rc_{i}"):
@@ -1297,7 +1297,7 @@ regime_colors={"成長擴張（Risk-On）":"#cc2222","復甦反彈（Early Cycle
                "流動性危機":"#4422aa","未知":"#444444"}
 rc=regime_colors.get(macro_regime,"#444444")
 st.markdown(f"""<div style="background:{rc};border-radius:8px;padding:8px 16px;margin:6px 0;text-align:center">
-    <span style="color:white;font-weight:bold">🌍 當前宏觀制度：{macro_regime}</span>
+    <span style="color:white;font-weight:bold">🌍 當前宏觀制度:{macro_regime}</span>
     <span style="color:rgba(255,255,255,0.7);font-size:12px;margin-left:12px">（影響AI三方辯論加減分）</span>
 </div>""",unsafe_allow_html=True)
 
@@ -1306,7 +1306,7 @@ st.divider()
 TABS = st.tabs(["📊 個股戰情室","💼 我的資產庫","📊 選股+回測","🗺️ 市場總覽","🧠 交易心理診斷"])
 
 # ══════════════════════════════════════════════
-# TAB 1：個股戰情室
+# TAB 1:個股戰情室
 # ══════════════════════════════════════════════
 with TABS[0]:
     # 快速選股
@@ -1366,7 +1366,7 @@ with TABS[0]:
                     if col_name in cal.columns:
                         ev_date = cal[col_name].iloc[0]
                         if ev_date and (pd.to_datetime(ev_date).date()-date.today()).days<=14:
-                            st.markdown(f'<div class="event-warn">⚠️ 事件雷達：{label} = {ev_date} （距今≤14天！）</div>',
+                            st.markdown(f'<div class="event-warn">⚠️ 事件雷達:{label} = {ev_date} （距今≤14天！）</div>',
                                         unsafe_allow_html=True)
         except: pass
 
@@ -1374,7 +1374,7 @@ with TABS[0]:
         hc,sc_col=st.columns([5,1])
         with hc:
             st.subheader(f"📌 {co}（{sym}）")
-            st.caption(f"數據時間：{ts}｜宏觀制度：{macro_regime}")
+            st.caption(f"數據時間:{ts}｜宏觀制度:{macro_regime}")
         with sc_col:
             if sym not in st.session_state.watchlist:
                 if st.button("⭐ 追蹤",use_container_width=True):
@@ -1403,7 +1403,7 @@ with TABS[0]:
                 <h3 style="margin:0;color:#e2e8f0">{ind['sc']} {ind['status']}</h3>
                 <p style="margin:5px 0 0;color:#94a3b8;font-size:13px">{ind['status_desc']}</p>
             </div>""",unsafe_allow_html=True)
-            # 台灣色系：漲=紅=inverse
+            # 台灣色系:漲=紅=inverse
             ci="🔴" if ind["change_pct"]>=0 else "🟢"
             r1,r2,r3 = st.columns(3)
             r1.metric("💰 現價",  ind["price"])
@@ -1441,28 +1441,28 @@ with TABS[0]:
                 st.markdown(f"""<div class="entry-card">
                     <div style="color:#66cc66;font-weight:bold">🎯 參考買入區</div>
                     <div style="margin:8px 0;color:#e2e8f0;line-height:2">
-                        保守：<b>{entry['con_buy']}</b><br>
-                        穩健：<b>{entry['mod_buy']}</b><br>
-                        積極：<b>{entry['agg_buy']}</b></div>
+                        保守:<b>{entry['con_buy']}</b><br>
+                        穩健:<b>{entry['mod_buy']}</b><br>
+                        積極:<b>{entry['agg_buy']}</b></div>
                     <div style="color:#94a3b8;font-size:11px">台股一張≈{entry['lot_cost']:,.0f}元</div>
                 </div>""",unsafe_allow_html=True)
             with e2:
                 st.markdown(f"""<div class="stop-card">
                     <div style="color:#ff6666;font-weight:bold">🛡️ 停損參考</div>
                     <div style="margin:8px 0;color:#e2e8f0;line-height:2">
-                        緊（短線）：<b>{entry['sl_tight']}</b><br>
-                        標準：<b>{entry['sl_normal']}</b><br>
-                        寬（長線）：<b>{entry['sl_wide']}</b></div>
+                        緊（短線）:<b>{entry['sl_tight']}</b><br>
+                        標準:<b>{entry['sl_normal']}</b><br>
+                        寬（長線）:<b>{entry['sl_wide']}</b></div>
                     <div style="color:#94a3b8;font-size:11px">跌破即出場，保護本金</div>
                 </div>""",unsafe_allow_html=True)
             with e3:
                 st.markdown(f"""<div class="target-card">
                     <div style="color:#66aaff;font-weight:bold">🎯 目標價</div>
                     <div style="margin:8px 0;color:#e2e8f0;line-height:2">
-                        T1（短）：<b>{entry['tp1']}</b><br>
-                        T2（中）：<b>{entry['tp2']}</b><br>
-                        T3（壓力）：<b>{entry['tp3']}</b></div>
-                    <div style="color:#94a3b8;font-size:11px">風報比：{entry['rr']}:1</div>
+                        T1（短）:<b>{entry['tp1']}</b><br>
+                        T2（中）:<b>{entry['tp2']}</b><br>
+                        T3（壓力）:<b>{entry['tp3']}</b></div>
+                    <div style="color:#94a3b8;font-size:11px">風報比:{entry['rr']}:1</div>
                 </div>""",unsafe_allow_html=True)
 
         st.divider()
@@ -1473,7 +1473,7 @@ with TABS[0]:
                               help="顯示基於歷史波動率的30日價格機率錐形區間，需要額外幾秒計算")
         mc_data = monte_carlo_simulation(hist) if show_mc else None
         if mc_data:
-            st.caption(f"蒙地卡羅參數：日均報酬率={mc_data['mu']:.4f}，日波動率σ={mc_data['sigma']:.4f}，模擬2000條路徑")
+            st.caption(f"蒙地卡羅參數:日均報酬率={mc_data['mu']:.4f}，日波動率σ={mc_data['sigma']:.4f}，模擬2000條路徑")
 
         # 買入標記（從持股記錄）
         buy_markers = []
@@ -1544,7 +1544,7 @@ with TABS[0]:
                                 st.markdown(lines[1] if len(lines)>1 else "")
 
                     with debate_tab3:
-                        st.markdown(f'<div class="judge-card"><b>🟣 CIO最終裁決（宏觀制度：{macro_regime}）</b></div>',
+                        st.markdown(f'<div class="judge-card"><b>🟣 CIO最終裁決（宏觀制度:{macro_regime}）</b></div>',
                                     unsafe_allow_html=True)
                         secs=judge_rpt.split("\n## ")
                         st.markdown(secs[0])
@@ -1559,7 +1559,7 @@ with TABS[0]:
                                 with st.expander(f"## {lines[0]}",expanded=True):
                                     st.markdown(lines[1] if len(lines)>1 else "")
                 except Exception as e:
-                    st.error(f"❌ AI 辯論失敗：{str(e)}")
+                    st.error(f"❌ AI 辯論失敗:{str(e)}")
 
         st.divider()
         st.warning("⚠️ 本系統所有分析與建議**僅供學習參考**，不構成任何投資建議。股市有風險，請自行判斷。")
@@ -1583,7 +1583,7 @@ with TABS[0]:
             st.dataframe(raw_df,use_container_width=True,hide_index=True)
 
 # ══════════════════════════════════════════════
-# TAB 2：我的資產庫
+# TAB 2:我的資產庫
 # ══════════════════════════════════════════════
 with TABS[1]:
     if not st.session_state.logged_in:
@@ -1603,7 +1603,7 @@ with TABS[1]:
             st.write(""); st.write("")
             p_btn=st.button("📊 計算",use_container_width=True,type="primary",key="pf_calc")
 
-        # 💡 修復 Bug 1：用 session_state 記住計算狀態，避免按按鈕後消失
+        # 💡 修復 Bug 1:用 session_state 記住計算狀態，避免按按鈕後消失
         if "show_pf_calc" not in st.session_state:
             st.session_state.show_pf_calc = False
         
@@ -1635,10 +1635,10 @@ with TABS[1]:
                 ico="📈 獲利中" if pct_v>=0 else "📉 虧損中"
                 st.markdown(f"""
                 <div style="background:{clr};border-radius:12px;padding:14px;margin:8px 0;border:1px solid {bdr}">
-                    <h3 style="margin:0;color:{bdr}">{ico}　{abs(pnl):,.0f}元（{pct_v:+.2f}%）</h3>
+                    <h3 style="margin:0;color:{bdr}">{ico} {abs(pnl):,.0f}元（{pct_v:+.2f}%）</h3>
                     <p style="color:#94a3b8;margin:5px 0 0;line-height:1.8">
-                        成本：{pc_}×{pn_:.0f}股＝{tc:,.0f}元　現值：{cp_}×{pn_:.0f}股＝{cv:,.0f}元<br>
-                        每股{'獲利' if pct_v>=0 else '虧損'}：{cp_-pc_:+.2f}元　持有{hd}天　年化：{ann:+.1f}%　台股約{pn_/1000:.1f}張
+                        成本:{pc_}×{pn_:.0f}股＝{tc:,.0f}元 現值:{cp_}×{pn_:.0f}股＝{cv:,.0f}元<br>
+                        每股{'獲利' if pct_v>=0 else '虧損'}:{cp_-pc_:+.2f}元 持有{hd}天 年化:{ann:+.1f}% 台股約{pn_/1000:.1f}張
                     </p>
                 </div>""",unsafe_allow_html=True)
 
@@ -1656,7 +1656,7 @@ with TABS[1]:
                                 buy_dt=pd.to_datetime(str(pd_))
                                 near=_h2_idx.index[_h2_idx.index.searchsorted(buy_dt)]
                                 row_buy=_h2_idx.loc[near]
-                                ind_at_buy_str=f"當日收盤：{row_buy['Close']:.2f}，開盤：{row_buy['Open']:.2f}，成交量：{row_buy['Volume']:,.0f}"
+                                ind_at_buy_str=f"當日收盤:{row_buy['Close']:.2f}，開盤:{row_buy['Open']:.2f}，成交量:{row_buy['Volume']:,.0f}"
                             except: ind_at_buy_str="買入當日數據無法重建"
                             with st.spinner("AI評估中..."):
                                 try:
@@ -1688,7 +1688,7 @@ with TABS[1]:
                                 
                                 new_cost = round(avg_cost, 2)
                                 new_shares = total_shares
-                                success_msg = f"✅ 已加碼合併！新均價：{new_cost}，總計：{new_shares} 股"
+                                success_msg = f"✅ 已加碼合併！新均價:{new_cost}，總計:{new_shares} 股"
                             else:
                                 new_cost = pc_
                                 new_shares = pn_
@@ -1707,8 +1707,8 @@ with TABS[1]:
                             st.session_state.show_pf_calc = False # 移除後關閉試算卡片
                             st.rerun()
 
-        # 💡 修復 Bug 2：把持股總覽「移出」計算條件外，確保只要有庫存就一定顯示
-        # 💡 方案 B：動態加總與分筆刪除區塊
+        # 💡 修復 Bug 2:把持股總覽「移出」計算條件外，確保只要有庫存就一定顯示
+        # 💡 方案 B:動態加總與分筆刪除區塊
         if st.session_state.portfolio:
             st.divider()
             st.markdown("### 📋 持股組合總覽")
@@ -1716,7 +1716,7 @@ with TABS[1]:
             pr_rows = []; tc_all = 0; cv_all = 0
             
             for sym, entries in st.session_state.portfolio.items():
-                # 防呆：確保 entries 是列表（如果抓到舊版資料，自動包裝成列表）
+                # 防呆:確保 entries 是列表（如果抓到舊版資料，自動包裝成列表）
                 if isinstance(entries, dict): entries = [entries]
                 
                 # 動態加總 list 裡面的股數和成本，計算精準均價
@@ -1758,7 +1758,7 @@ with TABS[1]:
                 # AI 投資長 CIO
                 if api_key:
                     if st.button("🏦 AI投資長（CIO）組合審查", type="primary", key="cio_btn"):
-                        port_str = "\n".join([f"- {r['代號']}: 成本{r['均價']} 現價{r['現價']} 損益{r['損益%']} 板塊{r.get('板塊','未知')}" for r in pr_rows])
+                        port_str = "\n".join([f"- {r['代號']}: 成本{r['均價']} 現價{r['現價']} 損益{r['損益%']} 板塊{r.get("板塊","未知")}" for r in pr_rows])
                         sec_count = {}
                         for r in pr_rows: sec_count[r.get("板塊","其他")] = sec_count.get(r.get("板塊","其他"), 0) + 1
                         with st.spinner("AI投資長審查中（含即時搜尋）..."):
@@ -1772,7 +1772,7 @@ with TABS[1]:
                                         st.markdown(lines[1] if len(lines) > 1 else "")
                             except Exception as e: st.error(str(e)[:80])
 
-            # 👇 方案 B：雙層選單分筆刪除功能
+            # 👇 方案 B:雙層選單分筆刪除功能
             st.divider()
             st.markdown("#### 🗑️ 刪除特定買入記錄")
             del_c1, del_c2 = st.columns([2, 2])
@@ -1820,7 +1820,7 @@ with TABS[1]:
                 chg_str=f"{'🔴+' if (ch_ or 0)>=0 else '🟢'}{ch_:.2f}%" if ch_ is not None else "-"
                 wrows.append({"代號":s,"現價":p_ or "N/A","今日":chg_str,"警報":"🔔" if s in st.session_state.alerts else ""})
             st.dataframe(pd.DataFrame(wrows),use_container_width=True,hide_index=True)
-            st.markdown("**快速分析：**")
+            st.markdown("**快速分析:**")
             bcols=st.columns(min(len(st.session_state.watchlist),6))
             for i,s in enumerate(st.session_state.watchlist[:6]):
                 if bcols[i].button(f"📊{s}",key=f"wa_{i}",use_container_width=True):
@@ -1860,7 +1860,7 @@ with TABS[1]:
                     db_add_trade(st.session_state.user_id if st.session_state.logged_in else "local",
                                  ts_sym,"LONG",t_ep,t_xp,t_sh,str(t_ed),str(t_xd),t_note)
                     st.session_state.trade_history=db_load_trades(st.session_state.user_id) if st.session_state.logged_in else st.session_state.trade_history+[{"symbol":ts_sym,"direction":"LONG","entry_price":t_ep,"exit_price":t_xp,"shares":t_sh,"entry_date":str(t_ed),"exit_date":str(t_xd),"pnl_amount":pnl_a,"pnl_pct":pnl_p,"note":t_note}]
-                    st.success(f"✅ 已記錄 {ts_sym}，損益：{pnl_a:+,.0f}元（{pnl_p:+.2f}%）")
+                    st.success(f"✅ 已記錄 {ts_sym}，損益:{pnl_a:+,.0f}元（{pnl_p:+.2f}%）")
 
         # 顯示記錄
         trades = st.session_state.trade_history
@@ -1894,7 +1894,7 @@ with TABS[1]:
                 if cc2.button("❌取消",key="ct_can"): st.session_state.confirm_clear_trades=False; st.rerun()
 
 # ══════════════════════════════════════════════
-# TAB 3：選股 + DCA 回測
+# TAB 3:選股 + DCA 回測
 # ══════════════════════════════════════════════
 with TABS[2]:
     scr_tab, dca_tab = st.tabs(["🔎 技術面選股器","⏳ 定期定額回測"])
@@ -1972,12 +1972,12 @@ with TABS[2]:
                         如果從<b>{dca_yr}年前</b>每月投入<b>{dca_amt:,.0f}元</b>，總投入<b>{ti:,.0f}元</b>，
                         今天資產現值<b>{fv:,.0f}元</b>，
                         <span style="color:{col_p};font-weight:bold">{'獲利' if profit>=0 else '虧損'} {abs(profit):,.0f}元（{stats['累積報酬率']}）</span><br>
-                        最大回撤<b>{stats['最大回撤MDD']}</b>：這段期間你的資產最多曾縮水這麼多，能撐住才能享受最終報酬。
+                        最大回撤<b>{stats['最大回撤MDD']}</b>:這段期間你的資產最多曾縮水這麼多，能撐住才能享受最終報酬。
                     </p>
                 </div>""",unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════
-# TAB 4：市場總覽
+# TAB 4:市場總覽
 # ══════════════════════════════════════════════
 with TABS[3]:
     st.markdown("### 🗺️ 板塊熱力圖（🔴漲 🟢跌，台灣色系）")
@@ -2005,14 +2005,14 @@ with TABS[3]:
             </div>""",unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════
-# TAB 5：交易心理診斷
+# TAB 5:交易心理診斷
 # ══════════════════════════════════════════════
 with TABS[4]:
     st.markdown("### 🧠 交易心理與行為偏誤診斷")
     st.info("""
     💡 **為什麼需要行為分析？**
     研究顯示，90%的散戶虧損不是因為不懂技術，而是**心理偏誤**導致的錯誤決策。
-    最常見的是**處置效應**：太快賣掉賺錢的股票，卻死抱著虧損的股票不放。
+    最常見的是**處置效應**:太快賣掉賺錢的股票，卻死抱著虧損的股票不放。
     本系統分析你的交易記錄，診斷你的行為偏誤。
     """)
 
@@ -2046,8 +2046,8 @@ with TABS[4]:
                 border:2px solid #ff3333">
                 <h3 style="color:#ff6666;margin:0">🚨 偵測到處置效應（Disposition Effect）！</h3>
                 <p style="color:#ffaaaa;margin:8px 0 0">
-                    你的數據顯示：<b>持有虧損股的時間顯著長於持有獲利股</b>。<br>
-                    這是散戶最常見的致命偏誤：急著鎖住獲利，卻死抱著虧損股等待解套。<br>
+                    你的數據顯示:<b>持有虧損股的時間顯著長於持有獲利股</b>。<br>
+                    這是散戶最常見的致命偏誤:急著鎖住獲利，卻死抱著虧損股等待解套。<br>
                     長期下來，你的帳戶將充滿「套牢股」，而所有獲利都被你過早了結。
                 </p>
             </div>""",unsafe_allow_html=True)
@@ -2063,7 +2063,7 @@ with TABS[4]:
                 color="損益%",
                 color_continuous_scale=[(0.0,TW_DOWN),(0.5,"#888888"),(1.0,TW_UP)],
                 color_continuous_midpoint=0,
-                title="交易散佈圖：持有天數 vs 損益（🔴獲利 🟢虧損）",
+                title="交易散佈圖:持有天數 vs 損益（🔴獲利 🟢虧損）",
                 template=DARK)
             fig_tr.add_hline(y=0,line_dash="dash",line_color="rgba(255,255,255,0.3)")
             fig_tr.update_layout(height=400)
@@ -2073,7 +2073,7 @@ with TABS[4]:
         if api_key:
             if st.button("🧠 AI 深度行為偏誤診斷",type="primary"):
                 trades_summary="\n".join([
-                    f"- {t.get('symbol','')}：買入{t.get('entry_price',0)} 賣出{t.get('exit_price',0)} 損益{t.get('pnl_pct',0):+.1f}% 持有{max((date.fromisoformat(t.get('exit_date','2000-01-01'))-date.fromisoformat(t.get('entry_date','2000-01-01'))).days,0) if t.get('exit_date') and t.get('entry_date') else 0}天"
+                    f"- {t.get('symbol','')}:買入{t.get('entry_price',0)} 賣出{t.get('exit_price',0)} 損益{t.get('pnl_pct',0):+.1f}% 持有{max((date.fromisoformat(t.get('exit_date','2000-01-01'))-date.fromisoformat(t.get('entry_date','2000-01-01'))).days,0) if t.get('exit_date') and t.get('entry_date') else 0}天"
                     for t in trades[:10]
                 ])
                 with st.spinner("AI分析行為模式中..."):
