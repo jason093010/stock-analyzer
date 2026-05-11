@@ -1573,137 +1573,77 @@ with TABS[1]:
 
     asset_tab1,asset_tab2,asset_tab3 = st.tabs(["💼 持股損益","⭐ 自選股","📋 交易記錄"])
 
-    # ── 持股損益（@st.fragment 防止全頁刷新）──
+# ── 持股損益 ──
     with asset_tab1:
-        @st.fragment
-        def portfolio_fragment():
-            st.markdown("### 💼 持股損益試算")
-            p1,p2,p3,p4,p5 = st.columns(5)
-            with p1: ps_=st.text_input("代號",placeholder="如2330",key="pf_s_",help="股票代號")
-            with p2: pc_=st.number_input("買入成本",0.0,step=0.5,key="pf_c_",help="每股買入價格")
-            with p3: pn_=st.number_input("持有股數",0.0,step=100.0,key="pf_n_",help="台股一張=1000股")
-            with p4: pd_=st.date_input("買入日期",key="pf_d_")
-            with p5:
-                st.write(""); st.write("")
-                p_btn=st.button("📊 計算",use_container_width=True,type="primary",key="pf_calc")
+        st.markdown("### 💼 持股損益試算")
+        p1,p2,p3,p4,p5 = st.columns(5)
+        with p1: ps_=st.text_input("代號",placeholder="如2330",key="pf_s_",help="股票代號")
+        with p2: pc_=st.number_input("買入成本",0.0,step=0.5,key="pf_c_",help="每股買入價格")
+        with p3: pn_=st.number_input("持有股數",0.0,step=100.0,key="pf_n_",help="台股一張=1000股")
+        with p4: pd_=st.date_input("買入日期",key="pf_d_")
+        with p5:
+            st.write(""); st.write("")
+            p_btn=st.button("📊 計算",use_container_width=True,type="primary",key="pf_calc")
 
-            if p_btn and ps_.strip() and pc_>0 and pn_>0:
-                ps_sym=get_sym(ps_.strip(),market)
-                ph_,pi_,pe_=fetch_data(ps_sym,"5d")
-                if pe_: st.error(f"❌ {pe_}")
-                else:
-                    cp_=round(float(ph_["Close"].iloc[-1]),2)
-                    pnl=round((cp_-pc_)*pn_,2); pct_v=round((cp_-pc_)/max(pc_,0.01)*100,2)
-                    tc=round(pc_*pn_,0); cv=round(cp_*pn_,0)
-                    hd=(date.today()-pd_).days; ann=round(pct_v/max(hd,1)*365,2)
-                    co_n=(pi_ or {}).get("longName") or ps_sym
-                    st.subheader(f"📌 {co_n}（{ps_sym}）")
+        # 💡 修復 Bug 1：用 session_state 記住計算狀態，避免按按鈕後消失
+        if "show_pf_calc" not in st.session_state:
+            st.session_state.show_pf_calc = False
+        
+        if p_btn:
+            st.session_state.show_pf_calc = True
 
-                    mc1,mc2,mc3,mc4,mc5=st.columns(5)
-                    mc1.metric("💰 現價",cp_)
-                    mc2.metric("📊 總成本",f"{tc:,.0f}")
-                    mc3.metric("💎 現值",f"{cv:,.0f}")
-                    mc4.metric("損益",f"{pnl:+,.0f}",delta=f"{pct_v:+.2f}%",delta_color="inverse")
-                    mc5.metric("年化報酬",f"{ann:+.1f}%",delta=str(ann),delta_color="inverse")
+        # 如果處於計算狀態，就顯示卡片與分析按鈕
+        if st.session_state.show_pf_calc and ps_.strip() and pc_>0 and pn_>0:
+            ps_sym=get_sym(ps_.strip(),market)
+            ph_,pi_,pe_=fetch_data(ps_sym,"5d")
+            if pe_: st.error(f"❌ {pe_}")
+            else:
+                cp_=round(float(ph_["Close"].iloc[-1]),2)
+                pnl=round((cp_-pc_)*pn_,2); pct_v=round((cp_-pc_)/max(pc_,0.01)*100,2)
+                tc=round(pc_*pn_,0); cv=round(cp_*pn_,0)
+                hd=(date.today()-pd_).days; ann=round(pct_v/max(hd,1)*365,2)
+                co_n=(pi_ or {}).get("longName") or ps_sym
+                st.subheader(f"📌 {co_n}（{ps_sym}）")
 
-                    clr="#2b0d0d" if pct_v>=0 else "#0d2b0d"
-                    bdr=TW_UP if pct_v>=0 else TW_DOWN
-                    ico="📈 獲利中" if pct_v>=0 else "📉 虧損中"
-                    st.markdown(f"""
-                    <div style="background:{clr};border-radius:12px;padding:14px;margin:8px 0;border:1px solid {bdr}">
-                        <h3 style="margin:0;color:{bdr}">{ico}　{abs(pnl):,.0f}元（{pct_v:+.2f}%）</h3>
-                        <p style="color:#94a3b8;margin:5px 0 0;line-height:1.8">
-                            成本：{pc_}×{pn_:.0f}股＝{tc:,.0f}元　現值：{cp_}×{pn_:.0f}股＝{cv:,.0f}元<br>
-                            每股{'獲利' if pct_v>=0 else '虧損'}：{cp_-pc_:+.2f}元　持有{hd}天　年化：{ann:+.1f}%　台股約{pn_/1000:.1f}張
-                        </p>
-                    </div>""",unsafe_allow_html=True)
+                mc1,mc2,mc3,mc4,mc5=st.columns(5)
+                mc1.metric("💰 現價",cp_)
+                mc2.metric("📊 總成本",f"{tc:,.0f}")
+                mc3.metric("💎 現值",f"{cv:,.0f}")
+                mc4.metric("損益",f"{pnl:+,.0f}",delta=f"{pct_v:+.2f}%",delta_color="inverse")
+                mc5.metric("年化報酬",f"{ann:+.1f}%",delta=str(ann),delta_color="inverse")
 
-                    # AI覆盤教練
-                    if api_key:
-                        if st.button("🤖 AI交易覆盤教練",key="review_btn",type="primary"):
-                            _h2,_,_=fetch_data(ps_sym,"6mo")
-                            if _h2 is not None:
-                                _ind2=calc_indicators(_h2)
-                                _en2=calc_entry(_ind2,_h2)
-                                # 買入當日指標（重建）
+                clr="#2b0d0d" if pct_v>=0 else "#0d2b0d"
+                bdr=TW_UP if pct_v>=0 else TW_DOWN
+                ico="📈 獲利中" if pct_v>=0 else "📉 虧損中"
+                st.markdown(f"""
+                <div style="background:{clr};border-radius:12px;padding:14px;margin:8px 0;border:1px solid {bdr}">
+                    <h3 style="margin:0;color:{bdr}">{ico}　{abs(pnl):,.0f}元（{pct_v:+.2f}%）</h3>
+                    <p style="color:#94a3b8;margin:5px 0 0;line-height:1.8">
+                        成本：{pc_}×{pn_:.0f}股＝{tc:,.0f}元　現值：{cp_}×{pn_:.0f}股＝{cv:,.0f}元<br>
+                        每股{'獲利' if pct_v>=0 else '虧損'}：{cp_-pc_:+.2f}元　持有{hd}天　年化：{ann:+.1f}%　台股約{pn_/1000:.1f}張
+                    </p>
+                </div>""",unsafe_allow_html=True)
+
+                # AI覆盤教練
+                if api_key:
+                    if st.button("🤖 AI交易覆盤教練",key="review_btn",type="primary"):
+                        _h2,_,_=fetch_data(ps_sym,"6mo")
+                        if _h2 is not None:
+                            _ind2=calc_indicators(_h2)
+                            _en2=calc_entry(_ind2,_h2)
+                            # 買入當日指標（重建）
+                            try:
+                                _h2_idx=_h2.copy(); _h2_idx.index=pd.to_datetime(_h2_idx.index)
+                                if _h2_idx.index.tz: _h2_idx.index=_h2_idx.index.tz_localize(None)
+                                buy_dt=pd.to_datetime(str(pd_))
+                                near=_h2_idx.index[_h2_idx.index.searchsorted(buy_dt)]
+                                row_buy=_h2_idx.loc[near]
+                                ind_at_buy_str=f"當日收盤：{row_buy['Close']:.2f}，開盤：{row_buy['Open']:.2f}，成交量：{row_buy['Volume']:,.0f}"
+                            except: ind_at_buy_str="買入當日數據無法重建"
+                            with st.spinner("AI評估中..."):
                                 try:
-                                    _h2_idx=_h2.copy(); _h2_idx.index=pd.to_datetime(_h2_idx.index)
-                                    if _h2_idx.index.tz: _h2_idx.index=_h2_idx.index.tz_localize(None)
-                                    buy_dt=pd.to_datetime(str(pd_))
-                                    near=_h2_idx.index[_h2_idx.index.searchsorted(buy_dt)]
-                                    row_buy=_h2_idx.loc[near]
-                                    ind_at_buy_str=f"當日收盤：{row_buy['Close']:.2f}，開盤：{row_buy['Open']:.2f}，成交量：{row_buy['Volume']:,.0f}"
-                                except: ind_at_buy_str="買入當日數據無法重建"
-                                with st.spinner("AI評估中..."):
-                                    try:
-                                        rev=ai_entry_critique(ps_sym,co_n,pc_,str(pd_),ind_at_buy_str,cp_,api_key)
-                                        secs=rev.split("\n## ")
-                                        st.markdown(secs[0])
-                                        for sec in secs[1:]:
-                                            lines=sec.split("\n",1)
-                                            with st.expander(f"## {lines[0]}",expanded=True):
-                                                st.markdown(lines[1] if len(lines)>1 else "")
-                                    except Exception as e: st.error(str(e)[:80])
-
-                    c1_s,c2_s=st.columns(2)
-                    with c1_s:
-                        if st.session_state.logged_in:
-                            if st.button("💾 存入持股記錄",key="save_pf"):
-                                db_save_port(st.session_state.user_id,ps_sym,pc_,pn_,"",str(pd_))
-                                st.session_state.portfolio[ps_sym]={"cost":pc_,"shares":pn_,"note":"","buy_date":str(pd_)}
-                                st.success("✅ 已儲存")
-                    with c2_s:
-                        if ps_sym in st.session_state.portfolio:
-                            if st.button("🗑️ 移除持股記錄",key="del_pf"):
-                                db_del_port(st.session_state.user_id,ps_sym)
-                                del st.session_state.portfolio[ps_sym]; st.success("✅ 已移除")
-
-            # 持股總覽 + 旭日圖
-            if st.session_state.portfolio:
-                st.divider()
-                st.markdown("### 📋 持股組合總覽")
-                sector_map={}
-                pr_rows=[]; tc_all=0; cv_all=0
-                for ps2,pd2 in st.session_state.portfolio.items():
-                    try:
-                        hh2=yf.Ticker(ps2).history(period="2d")
-                        if not hh2.empty:
-                            cp2=round(float(hh2["Close"].iloc[-1]),2)
-                            p2=round((cp2-pd2["cost"])/max(pd2["cost"],0.01)*100,2)
-                            c2=round(pd2["cost"]*pd2["shares"],0); v2=round(cp2*pd2["shares"],0)
-                            hd2=""
-                            if pd2.get("buy_date"):
-                                try: hd2=f"{(date.today()-date.fromisoformat(pd2['buy_date'])).days}天"
-                                except: pass
-                            # 取板塊
-                            try: sec=yf.Ticker(ps2).info.get("sector","其他") or "其他"
-                            except: sec="其他"
-                            sector_map[ps2]=sec
-                            pr_rows.append({"代號":ps2,"成本":pd2["cost"],"現價":cp2,
-                                            "損益%":f"{p2:+.2f}%","總損益":f"{v2-c2:+,.0f}",
-                                            "股數":pd2["shares"],"板塊":sec,"持有":hd2})
-                            tc_all+=c2; cv_all+=v2
-                    except: pass
-                if pr_rows:
-                    st.dataframe(pd.DataFrame(pr_rows),use_container_width=True,hide_index=True)
-                    tp=cv_all-tc_all; tpct=round(tp/max(tc_all,1)*100,2)
-                    st.metric("📊 組合總損益",f"{tp:+,.0f}元",delta=f"{tpct:+.2f}%",delta_color="inverse")
-
-                    # 旭日圖
-                    sb_fig=build_portfolio_sunburst(st.session_state.portfolio,sector_map)
-                    if sb_fig: st.plotly_chart(sb_fig,use_container_width=True)
-
-                    # AI投資長CIO審查
-                    if api_key:
-                        if st.button("🏦 AI投資長（CIO）組合審查",type="primary",key="cio_btn"):
-                            port_str="\n".join([f"- {r['代號']}：成本{r['成本']} 現價{r['現價']} 損益{r['損益%']} 板塊{r.get('板塊','未知')}" for r in pr_rows])
-                            sec_count={}
-                            for r in pr_rows: sec_count[r.get("板塊","其他")]=sec_count.get(r.get("板塊","其他"),0)+1
-                            sec_str=str(sec_count)
-                            with st.spinner("AI投資長審查中（含即時搜尋）..."):
-                                try:
-                                    cio_rpt=ai_portfolio_cio(port_str,sec_str,api_key)
-                                    secs=cio_rpt.split("\n## ")
+                                    rev=ai_entry_critique(ps_sym,co_n,pc_,str(pd_),ind_at_buy_str,cp_,api_key)
+                                    secs=rev.split("\n## ")
                                     st.markdown(secs[0])
                                     for sec in secs[1:]:
                                         lines=sec.split("\n",1)
@@ -1711,20 +1651,85 @@ with TABS[1]:
                                             st.markdown(lines[1] if len(lines)>1 else "")
                                 except Exception as e: st.error(str(e)[:80])
 
-                # 雙重確認清空
-                if not st.session_state.confirm_clear_port:
-                    if st.button("🗑️ 清空持股記錄",help="點擊後需再次確認",key="clr_port_btn"):
-                        st.session_state.confirm_clear_port=True; st.rerun()
-                else:
-                    st.markdown('<div class="confirm-warn">⚠️ 確定要清空所有持股記錄嗎？此動作無法復原！</div>',unsafe_allow_html=True)
-                    cc1,cc2=st.columns(2)
-                    if cc1.button("✅ 確定清空",type="primary",key="cp_ok"):
-                        if st.session_state.logged_in:
-                            for s in list(st.session_state.portfolio.keys()): db_del_port(st.session_state.user_id,s)
-                        st.session_state.portfolio={}; st.session_state.confirm_clear_port=False; st.rerun()
-                    if cc2.button("❌ 取消",key="cp_cancel"):
-                        st.session_state.confirm_clear_port=False; st.rerun()
-        portfolio_fragment()
+                c1_s,c2_s=st.columns(2)
+                with c1_s:
+                    if st.session_state.logged_in:
+                        if st.button("💾 存入持股記錄",key="save_pf"):
+                            db_save_port(st.session_state.user_id,ps_sym,pc_,pn_,"",str(pd_))
+                            st.session_state.portfolio[ps_sym]={"cost":pc_,"shares":pn_,"note":"","buy_date":str(pd_)}
+                            st.success("✅ 已儲存")
+                with c2_s:
+                    if ps_sym in st.session_state.portfolio:
+                        if st.button("🗑️ 移除持股記錄",key="del_pf"):
+                            db_del_port(st.session_state.user_id,ps_sym)
+                            del st.session_state.portfolio[ps_sym]
+                            st.success("✅ 已移除")
+                            st.session_state.show_pf_calc = False # 移除後關閉試算卡片
+                            st.rerun()
+
+        # 💡 修復 Bug 2：把持股總覽「移出」計算條件外，確保只要有庫存就一定顯示
+        if st.session_state.portfolio:
+            st.divider()
+            st.markdown("### 📋 持股組合總覽")
+            sector_map={}
+            pr_rows=[]; tc_all=0; cv_all=0
+            for ps2,pd2 in st.session_state.portfolio.items():
+                try:
+                    hh2=yf.Ticker(ps2).history(period="2d")
+                    if not hh2.empty:
+                        cp2=round(float(hh2["Close"].iloc[-1]),2)
+                        p2=round((cp2-pd2["cost"])/max(pd2["cost"],0.01)*100,2)
+                        c2=round(pd2["cost"]*pd2["shares"],0); v2=round(cp2*pd2["shares"],0)
+                        hd2=""
+                        if pd2.get("buy_date"):
+                            try: hd2=f"{(date.today()-date.fromisoformat(pd2['buy_date'])).days}天"
+                            except: pass
+                        try: sec=yf.Ticker(ps2).info.get("sector","其他") or "其他"
+                        except: sec="其他"
+                        sector_map[ps2]=sec
+                        pr_rows.append({"代號":ps2,"成本":pd2["cost"],"現價":cp2,
+                                        "損益%":f"{p2:+.2f}%","總損益":f"{v2-c2:+,.0f}",
+                                        "股數":pd2["shares"],"板塊":sec,"持有":hd2})
+                        tc_all+=c2; cv_all+=v2
+                except: pass
+            
+            if pr_rows:
+                st.dataframe(pd.DataFrame(pr_rows),use_container_width=True,hide_index=True)
+                tp=cv_all-tc_all; tpct=round(tp/max(tc_all,1)*100,2)
+                st.metric("📊 組合總損益",f"{tp:+,.0f}元",delta=f"{tpct:+.2f}%",delta_color="inverse")
+
+                sb_fig=build_portfolio_sunburst(st.session_state.portfolio,sector_map)
+                if sb_fig: st.plotly_chart(sb_fig,use_container_width=True)
+
+                if api_key:
+                    if st.button("🏦 AI投資長（CIO）組合審查",type="primary",key="cio_btn"):
+                        port_str="\n".join([f"- {r['代號']}：成本{r['成本']} 現價{r['現價']} 損益{r['損益%']} 板塊{r.get('板塊','未知')}" for r in pr_rows])
+                        sec_count={}
+                        for r in pr_rows: sec_count[r.get("板塊","其他")]=sec_count.get(r.get("板塊","其他"),0)+1
+                        sec_str=str(sec_count)
+                        with st.spinner("AI投資長審查中（含即時搜尋）..."):
+                            try:
+                                cio_rpt=ai_portfolio_cio(port_str,sec_str,api_key)
+                                secs=cio_rpt.split("\n## ")
+                                st.markdown(secs[0])
+                                for sec in secs[1:]:
+                                    lines=sec.split("\n",1)
+                                    with st.expander(f"## {lines[0]}",expanded=True):
+                                        st.markdown(lines[1] if len(lines)>1 else "")
+                            except Exception as e: st.error(str(e)[:80])
+
+            if not st.session_state.confirm_clear_port:
+                if st.button("🗑️ 清空持股記錄",help="點擊後需再次確認",key="clr_port_btn"):
+                    st.session_state.confirm_clear_port=True; st.rerun()
+            else:
+                st.markdown('<div class="confirm-warn">⚠️ 確定要清空所有持股記錄嗎？此動作無法復原！</div>',unsafe_allow_html=True)
+                cc1,cc2=st.columns(2)
+                if cc1.button("✅ 確定清空",type="primary",key="cp_ok"):
+                    if st.session_state.logged_in:
+                        for s in list(st.session_state.portfolio.keys()): db_del_port(st.session_state.user_id,s)
+                    st.session_state.portfolio={}; st.session_state.confirm_clear_port=False; st.rerun()
+                if cc2.button("❌ 取消",key="cp_cancel"):
+                    st.session_state.confirm_clear_port=False; st.rerun()
 
     # ── 自選股 ──
     with asset_tab2:
