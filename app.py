@@ -1740,18 +1740,23 @@ with TABS[1]:
                                         st.markdown(lines[1] if len(lines)>1 else "")
                             except Exception as e: st.error(str(e)[:80])
 
-            if not st.session_state.confirm_clear_port:
-                if st.button("🗑️ 清空持股記錄",help="點擊後需再次確認",key="clr_port_btn"):
-                    st.session_state.confirm_clear_port=True; st.rerun()
-            else:
-                st.markdown('<div class="confirm-warn">⚠️ 確定要清空所有持股記錄嗎？此動作無法復原！</div>',unsafe_allow_html=True)
-                cc1,cc2=st.columns(2)
-                if cc1.button("✅ 確定清空",type="primary",key="cp_ok"):
-                    if st.session_state.logged_in:
-                        for s in list(st.session_state.portfolio.keys()): db_del_port(st.session_state.user_id,s)
-                    st.session_state.portfolio={}; st.session_state.confirm_clear_port=False; st.rerun()
-                if cc2.button("❌ 取消",key="cp_cancel"):
-                    st.session_state.confirm_clear_port=False; st.rerun()
+            # 👇 替換成這段：精準下拉選單刪除功能
+            st.divider()
+            st.markdown("#### 🗑️ 刪除特定持股記錄")
+            del_c1, del_c2 = st.columns([3, 1])
+            with del_c1:
+                # 使用下拉式選單列出帳上所有的股票代號
+                del_target = st.selectbox("請選擇輸入錯誤、或想要移除的股票", options=list(st.session_state.portfolio.keys()))
+            with del_c2:
+                st.write("") # 往下推兩格，為了對齊左邊的選單
+                st.write("")
+                if st.button("❌ 刪除此檔股票", use_container_width=True):
+                    if del_target in st.session_state.portfolio:
+                        if st.session_state.logged_in:
+                            db_del_port(st.session_state.user_id, del_target)
+                        del st.session_state.portfolio[del_target] # 從暫存中刪除
+                        st.success(f"✅ 已成功移除 {del_target}")
+                        st.rerun()
 
     # ── 自選股 ──
     with asset_tab2:
