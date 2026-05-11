@@ -2,22 +2,6 @@
 # ║  股市小白分析系統 Pro  V2.0  ─  機構級量化重構版                      ║
 # ║  Taiwan Color: RED=漲  GREEN=跌  |  AI三方辯論  |  蒙地卡羅模擬      ║
 # ╚═══════════════════════════════════════════════════════════════════╝
-import sys, io, logging
-logging.getLogger().setLevel(logging.CRITICAL)
-logging.getLogger("httpx").setLevel(logging.CRITICAL)
-
-try:
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
-except:
-    pass
-
-import requests
-yf_session = requests.Session()
-yf_session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-})
-
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -336,7 +320,7 @@ def pct_fmt(v):
 def fetch_data(symbol: str, period: str):
     for i in range(3):
         try:
-            t = yf.Ticker(symbol, session=yf_session)
+            t = yf.Ticker(symbol)
             h = t.history(period=period)
             info = t.info
             if h.empty: return None, None, "查無此代號"
@@ -352,7 +336,7 @@ def fetch_market_overview():
     rows = []
     def _fetch_one(name, sym):
         try:
-            h = yf.Ticker(sym, session=yf_session).history(period="2d")
+            h = yf.Ticker(sym).history(period="2d")
             if not h.empty and len(h)>=2:
                 p  = round(float(h["Close"].iloc[-1]),2)
                 ch = round((float(h["Close"].iloc[-1])-float(h["Close"].iloc[-2]))/
@@ -373,7 +357,7 @@ def fetch_batch_quotes(symbols: list) -> dict:
     results = {}
     def _one(sym):
         try:
-            h = yf.Ticker(sym, session=yf_session).history(period="5d")
+            h = yf.Ticker(sym).history(period="5d")
             if not h.empty and len(h)>=2:
                 p  = round(float(h["Close"].iloc[-1]),2)
                 ch = round((float(h["Close"].iloc[-1])-float(h["Close"].iloc[-2]))/
@@ -401,7 +385,7 @@ def fetch_heatmap_data(market: str) -> pd.DataFrame:
     rows = []
     def _fetch_hm(sector,name,full):
         try:
-            t = yf.Ticker(full, session=yf_session)
+            t = yf.Ticker(full)
             h = t.history(period="2d")
             info = t.info
             if not h.empty and len(h)>=2:
@@ -1196,17 +1180,17 @@ with st.sidebar:
         st.success("🔑 API 金鑰已自動帶入")
         if st.button("🔄 更換金鑰"):
             st.session_state.api_key=""; st.rerun()
-        api_key = "".join(c for c in st.session_state.api_key if ord(c) < 128).strip() if st.session_state.api_key else ""
+        api_key = st.session_state.api_key
     else:
         api_key_in = st.text_input("🔑 Gemini API 金鑰",type="password",placeholder="AIza...",
             help="至 aistudio.google.com 免費取得。登入後加密儲存，下次自動帶入。",
             value=st.session_state.api_key)
         if api_key_in and api_key_in!=st.session_state.api_key:
-            st.session_state.api_key="".join(c for c in api_key_in if ord(c) < 128).strip()
+            st.session_state.api_key=api_key_in
             if st.session_state.logged_in and HAS_DB:
                 db_save_enc_key(st.session_state.username,st.session_state._pin,api_key_in)
                 st.success("🔒 已加密儲存")
-        api_key = "".join(c for c in st.session_state.api_key if ord(c) < 128).strip() if st.session_state.api_key else ""
+        api_key = st.session_state.api_key
 
     st.divider()
     st.header("📊 分析設定")
@@ -1375,7 +1359,7 @@ with TABS[0]:
 
         # 即將到來的財報/除息警報
         try:
-            t_obj = yf.Ticker(sym, session=yf_session)
+            t_obj = yf.Ticker(sym)
             cal   = t_obj.calendar
             if cal is not None and not cal.empty:
                 for label,col_name in [("📅 財報日","Earnings Date"),("💰 除息日","Ex-Dividend Date")]:
@@ -1741,14 +1725,14 @@ with TABS[1]:
                 avg_c = round(total_c / total_s, 2) if total_s > 0 else 0
                 
                 try:
-                    hh2 = yf.Ticker(sym, session=yf_session).history(period="2d")
+                    hh2 = yf.Ticker(sym).history(period="2d")
                     if not hh2.empty:
                         cp2 = round(float(hh2["Close"].iloc[-1]), 2)
                         pnl_pct = round((cp2 - avg_c) / max(avg_c, 0.01) * 100, 2)
                         v2 = round(cp2 * total_s, 0)
                         c2 = round(total_c, 0)
                         
-                        try: sec = yf.Ticker(sym, session=yf_session).info.get("sector", "其他") or "其他"
+                        try: sec = yf.Ticker(sym).info.get("sector", "其他") or "其他"
                         except: sec = "其他"
                         sector_map[sym] = sec
                         
