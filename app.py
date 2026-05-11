@@ -1655,9 +1655,31 @@ with TABS[1]:
                 with c1_s:
                     if st.session_state.logged_in:
                         if st.button("💾 存入持股記錄",key="save_pf"):
-                            db_save_port(st.session_state.user_id,ps_sym,pc_,pn_,"",str(pd_))
-                            st.session_state.portfolio[ps_sym]={"cost":pc_,"shares":pn_,"note":"","buy_date":str(pd_)}
-                            st.success("✅ 已儲存")
+                            # 💡 檢查是否已經持有該股票，若有則進行加權平均計算
+                            if ps_sym in st.session_state.portfolio:
+                                old_data = st.session_state.portfolio[ps_sym]
+                                old_cost = old_data["cost"]
+                                old_shares = old_data["shares"]
+                                
+                                # 計算新的總股數與加權平均成本
+                                total_shares = old_shares + pn_
+                                if total_shares > 0:
+                                    avg_cost = ((old_cost * old_shares) + (pc_ * pn_)) / total_shares
+                                else:
+                                    avg_cost = 0
+                                
+                                new_cost = round(avg_cost, 2)
+                                new_shares = total_shares
+                                success_msg = f"✅ 已加碼合併！新均價：{new_cost}，總計：{new_shares} 股"
+                            else:
+                                new_cost = pc_
+                                new_shares = pn_
+                                success_msg = "✅ 已新增持股記錄"
+
+                            # 寫入更新後的數據到資料庫與暫存
+                            db_save_port(st.session_state.user_id, ps_sym, new_cost, new_shares, "", str(pd_))
+                            st.session_state.portfolio[ps_sym] = {"cost": new_cost, "shares": new_shares, "note": "", "buy_date": str(pd_)}
+                            st.success(success_msg)
                 with c2_s:
                     if ps_sym in st.session_state.portfolio:
                         if st.button("🗑️ 移除持股記錄",key="del_pf"):
