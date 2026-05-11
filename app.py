@@ -192,15 +192,13 @@ def db_del_alert(uid,sym):
 def db_load_port(uid):
     if not HAS_DB: return {}
     try:
-        # 改成抓取所有原始列資料
         data = _supabase.table("portfolio").select("*").eq("user_id", uid).execute().data
-        # 整理成以 symbol 為 key，內容為 list 的格式
         port = {}
         for x in data:
             sym = x["symbol"]
             if sym not in port: port[sym] = []
             port[sym].append({
-                "db_id": x["id"], # 存下資料庫的唯一 ID 用於刪除
+                "db_id": x["id"], 
                 "cost": x["cost_price"],
                 "shares": x["shares"],
                 "note": x.get("note",""),
@@ -211,7 +209,6 @@ def db_load_port(uid):
 def db_save_port(uid, sym, cost, shares, note="", buy_date=""):
     if not HAS_DB: return
     try:
-        # 直接插入新的一列，不再檢查重複
         _supabase.table("portfolio").insert({
             "user_id": uid, "symbol": sym, 
             "cost_price": cost, "shares": shares, 
@@ -222,6 +219,11 @@ def db_del_port_by_id(uid, db_id):
     if not HAS_DB: return
     try:
         _supabase.table("portfolio").delete().eq("id", db_id).eq("user_id", uid).execute()
+    except: pass
+def db_del_port(uid, sym):
+    if not HAS_DB: return
+    try:
+        _supabase.table("portfolio").delete().eq("user_id", uid).eq("symbol", sym).execute()
     except: pass
 
 # ── Trade History ──
@@ -314,23 +316,26 @@ def pct_fmt(v):
     return f"{v*100:.1f}%" if isinstance(v,float) and v==v else "N/A"
 
 # ══════════════════════════════════════════════
-# 9. 數據抓取(全域替換為 yf.download 批量下載，徹底解決 429 封鎖)
+# 9. 數據抓取
 # ══════════════════════════════════════════════
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_data(symbol: str, period: str):
     try:
-        # 使用 download 替代 history，更穩定且支援批量，不易被鎖
         h = yf.download(symbol, period=period, progress=False)
         if h is None or h.empty: 
             return None, None, "查無此代號或暫無數據"
             
-        # 處理 yfinance 新版的 MultiIndex 格式
         if isinstance(h.columns, pd.MultiIndex):
             h.columns = [col[0] for col in h.columns]
             
+        if "Close" in h.columns:
+            h = h.dropna(subset=["Close"])
+            
+        if h.empty: 
+            return None, None, "查無有效數據或逢休市無資料"
+            
         info = {}
         try:
-            # 這是最容易被鎖的端點，加入嚴格 try-except 保護
             t = yf.Ticker(symbol)
             info['longName'] = t.info.get('longName', symbol)
             info['sector'] = t.info.get('sector', '其他')
@@ -351,7 +356,6 @@ def fetch_market_overview():
     tickers = list(syms.values())
     rows = []
     try:
-        # 批量下載，發送 1 次請求取代 6 次
         data = yf.download(tickers, period="2d", group_by="ticker", progress=False)
         for name, sym in syms.items():
             try:
@@ -371,7 +375,6 @@ def fetch_batch_quotes(symbols: tuple) -> dict:
     if not symbols: return {}
     results = {}
     try:
-        # 批量下載自選股，只發送 1 次請求
         data = yf.download(list(symbols), period="5d", group_by="ticker", progress=False)
         if data is None or data.empty:
              for sym in symbols: results[sym] = (None, None)
@@ -407,7 +410,6 @@ def fetch_heatmap_data(market: str) -> pd.DataFrame:
     if not tickers: return pd.DataFrame()
     
     try:
-        # 批量下載，發送 1 次請求取代 16 次，且完全不呼叫最毒的 t.info
         data = yf.download(tickers, period="2d", group_by="ticker", progress=False)
         for full in tickers:
             try:
@@ -421,7 +423,7 @@ def fetch_heatmap_data(market: str) -> pd.DataFrame:
                         sector, name = sym_map[full]
                         rows.append({
                             "板塊": sector, "名稱": name, "代號": full.replace(".TW",""),
-                            "漲跌%": ch, "市值": 1e9 # 統一大小以防觸發 429
+                            "漲跌%": ch, "市值": 1e9 
                         })
             except: continue
     except: pass
@@ -527,7 +529,7 @@ def calc_indicators(hist: pd.DataFrame) -> dict:
     elif rv>=70 and kv>80:
         ind["status"]="雙重超買 🟡";ind["sc"]="🟡";ind["status_desc"]="RSI與Stochastic雙超買，短線獲利了結壓力大。"
     elif abs(ind["ma5"]-ind["ma20"])/max(price,0.01)<0.015:
-        ind["status"]="均線糾結蓄勢 ⚪";ind["sc"]="⚪";ind["status_desc"]="均線纏繞，等待突破，大行情可能即將爆發。"
+        ind["status"]="均線糾結蓄勢 ⚪";ind["sc"]="⚪";ind["status_desc"]="均線纏繞，等待突破，大行情可能即爆發。"
     elif ind["ma5"]>ind["ma20"] and rv>50:
         ind["status"]="短線偏多 🔵";ind["sc"]="🔵";ind["status_desc"]="短均線在長均線上方，RSI偏強，短線多方略佔優勢。"
     else:
@@ -600,7 +602,6 @@ def calc_entry(ind: dict, hist: pd.DataFrame) -> dict:
 # 13. 蒙地卡羅模擬(幾何布朗運動)
 # ══════════════════════════════════════════════
 def monte_carlo_simulation(hist: pd.DataFrame, days: int = 30, simulations: int = 2000) -> dict:
-    """Geometric Brownian Motion，30日錐形不確定區間"""
     close = hist["Close"].squeeze().astype(float)
     log_returns = np.log(close / close.shift(1)).dropna()
     mu    = float(log_returns.mean())
@@ -635,14 +636,12 @@ def monte_carlo_simulation(hist: pd.DataFrame, days: int = 30, simulations: int 
 # 14. Screener(技術面篩選)
 # ══════════════════════════════════════════════
 def run_screener(symbols: list, conditions: dict) -> list:
-    """多條件批量篩選，ThreadPoolExecutor 加速"""
     results = []
     def _check(sym):
         try:
             h, info, err = fetch_data(sym, "3mo")
             if err or h is None: return None
             ind = calc_indicators(h)
-            # 條件判斷
             ok = True
             if conditions.get("rsi_lt") and ind["rsi"] >= conditions["rsi_lt"]: ok=False
             if conditions.get("rsi_gt") and ind["rsi"] <= conditions["rsi_gt"]: ok=False
@@ -724,7 +723,6 @@ def analyze_behavioral_bias(trades: list) -> dict:
 # 17. 加權平均成本(多次買入同一股票)
 # ══════════════════════════════════════════════
 def weighted_avg_cost(entries: list) -> dict:
-    """entries = [{"price":xx,"shares":xx}, ...]"""
     total_cost = sum(e["price"]*e["shares"] for e in entries)
     total_shares= sum(e["shares"] for e in entries)
     if total_shares==0: return {"avg_cost":0,"total_shares":0,"total_cost":0}
@@ -763,7 +761,6 @@ def call_ai(api_key: str, prompt: str, use_search: bool = False) -> str:
 # 19. AI Prompts(三方辯論 + 宏觀制度過濾)
 # ══════════════════════════════════════════════
 def ai_macro_regime(api_key: str) -> str:
-    """先確認當前宏觀制度"""
     prompt = """請即時搜尋並判斷當前(本週)全球總體經濟所處的宏觀制度(Macro Regime)。
 
 從以下選項選擇最符合的一個並說明理由(50字以內): 
@@ -781,7 +778,6 @@ def ai_macro_regime(api_key: str) -> str:
     return call_ai(api_key, prompt, use_search=True)
 
 def ai_three_agent_debate(ind, info, sym, api_key, entry, score, macro_regime) -> tuple:
-    """三方辯論: 多頭 vs 空頭 vs CIO裁判"""
     co  = info.get("longName") or info.get("shortName") or sym
     atr = entry["atr"]
     bull_range = f"{round(ind['price']+1.5*atr,2)}"
@@ -799,7 +795,6 @@ PE={info.get('trailingPE','N/A')} PB={info.get('priceToBook','N/A')} Beta={info.
 **當前宏觀制度: {macro_regime}**
     """
 
-    # ── 多頭代理人 ──
     bull_prompt = f"""你是一位狂熱的多頭分析師(Permabull Agent)。你的任務是找出所有看漲理由，並做最強力的多頭辯護。
 
 {base_data}
@@ -820,7 +815,6 @@ PE={info.get('trailingPE','N/A')} PB={info.get('priceToBook','N/A')} Beta={info.
 
 不得提任何空頭觀點。禁止「一定」「保證」「必漲」。"""
 
-    # ── 空頭代理人 ──
     bear_prompt = f"""你是一位極度悲觀的空頭分析師(Ruthless Bear Agent)。你的任務是無情揭露所有看跌風險，做最嚴酷的空頭論證。
 
 {base_data}
@@ -842,7 +836,6 @@ PE={info.get('trailingPE','N/A')} PB={info.get('priceToBook','N/A')} Beta={info.
 
 不得提任何多頭觀點。禁止「一定」「保證」「必跌」。"""
 
-    # ── CIO裁判 ──
     judge_prompt = f"""你是一位冷靜理性的投資長(CIO Judge)。你已收到多頭和空頭的辯論報告，現在做出最終裁決。
 
 {base_data}
@@ -874,7 +867,6 @@ ATR計算參數: 現價={ind['price']}，ATR={atr}
 
 禁止「一定」「保證」「必漲」「必跌」。"""
 
-    # 三路並發(但 Streamlit 中需Sequential避免rate limit)
     bull_rpt = call_ai(api_key, bull_prompt, use_search=True)
     bear_rpt = call_ai(api_key, bear_prompt, use_search=True)
     judge_rpt= call_ai(api_key, judge_prompt, use_search=False)
@@ -972,11 +964,10 @@ def ai_bias_warning(bias_data: dict, trades_summary: str, api_key: str) -> str:
 # 20. 圖表(台灣色系: 紅漲綠跌)
 # ══════════════════════════════════════════════
 DARK = "plotly_dark"
-TW_UP   = "#ff3333"   # 台灣: 紅色=漲
-TW_DOWN = "#22cc44"   # 台灣: 綠色=跌
+TW_UP   = "#ff3333"
+TW_DOWN = "#22cc44"
 
 def build_main_chart(hist, ind, entry, sym, mc_data=None, buy_markers=None):
-    """主圖表: K線+均線+布林+蒙地卡羅+買入標記"""
     idx = hist.index
     rows = 4; heights = [0.50,0.18,0.17,0.15]
     titles = ["K線+均線+布林(台灣色系: 紅漲綠跌)","成交量","RSI+Stochastic","MACD"]
@@ -987,28 +978,24 @@ def build_main_chart(hist, ind, entry, sym, mc_data=None, buy_markers=None):
     fig = make_subplots(rows=rows,cols=1,shared_xaxes=True,
                         row_heights=heights,subplot_titles=titles,vertical_spacing=0.03)
 
-    # ── K線(台灣色系)──
     fig.add_trace(go.Candlestick(
         x=idx,open=hist["Open"],high=hist["High"],
         low=hist["Low"],close=hist["Close"],name="K線",
-        increasing_line_color=TW_UP,   # 紅=漲
-        decreasing_line_color=TW_DOWN, # 綠=跌
+        increasing_line_color=TW_UP,
+        decreasing_line_color=TW_DOWN,
         increasing_fillcolor=TW_UP,
         decreasing_fillcolor=TW_DOWN,
     ),row=1,col=1)
 
-    # 均線
     for key,color,nm in [("_ma5","#FFA726","MA5"),("_ma20","#42A5F5","MA20"),("_ma60","#AB47BC","MA60")]:
         fig.add_trace(go.Scatter(x=idx,y=ind[key],line=dict(color=color,width=1.3),name=nm),row=1,col=1)
 
-    # 布林通道
     fig.add_trace(go.Scatter(x=idx,y=ind["_bb_u"],
         line=dict(color="rgba(255,235,59,0.5)",width=1,dash="dot"),name="布林上",showlegend=False),row=1,col=1)
     fig.add_trace(go.Scatter(x=idx,y=ind["_bb_l"],
         line=dict(color="rgba(255,235,59,0.5)",width=1,dash="dot"),name="布林下",showlegend=False,
         fill="tonexty",fillcolor="rgba(255,235,59,0.04)"),row=1,col=1)
 
-    # 支撐壓力
     for y_val,color,label in [
         (entry["sup1"],"rgba(34,204,68,0.8)",f"支撐 {entry['sup1']}"),
         (entry["res1"],"rgba(255,51,51,0.8)", f"壓力 {entry['res1']}"),
@@ -1017,7 +1004,6 @@ def build_main_chart(hist, ind, entry, sym, mc_data=None, buy_markers=None):
         fig.add_hline(y=y_val,line_dash="dash",line_color=color,
                       annotation_text=label,annotation_font_size=10,row=1,col=1)
 
-    # 買入標記
     if buy_markers:
         for bm in buy_markers:
             fig.add_trace(go.Scatter(
@@ -1029,25 +1015,21 @@ def build_main_chart(hist, ind, entry, sym, mc_data=None, buy_markers=None):
                 name=f"買入 {bm['price']}",showlegend=True,
             ),row=1,col=1)
 
-    # 成交量(台灣色系)
     vc=[TW_UP if c>=o else TW_DOWN for c,o in zip(hist["Close"],hist["Open"])]
     fig.add_trace(go.Bar(x=idx,y=ind["_v"],marker_color=vc,showlegend=False),row=2,col=1)
     fig.add_trace(go.Scatter(x=idx,y=ind["_v"].rolling(20).mean(),
         line=dict(color="#FFA726",width=1.2),showlegend=False),row=2,col=1)
 
-    # RSI + Stochastic
     fig.add_trace(go.Scatter(x=idx,y=ind["_rsi"],line=dict(color="#FF7043",width=1.5),name="RSI",showlegend=False),row=3,col=1)
     fig.add_trace(go.Scatter(x=idx,y=ind["_stk"],line=dict(color="#66BB6A",width=1,dash="dot"),name="StochK",showlegend=False),row=3,col=1)
     for lv,lc in [(70,"rgba(255,51,51,0.4)"),(50,"rgba(150,150,150,0.3)"),(30,"rgba(34,204,68,0.4)")]:
         fig.add_hline(y=lv,line_dash="dash",line_color=lc,row=3,col=1)
 
-    # MACD(台灣色系)
     mc_c=[TW_UP if x>=0 else TW_DOWN for x in ind["_macd_h"]]
     fig.add_trace(go.Bar(x=idx,y=ind["_macd_h"],marker_color=mc_c,showlegend=False),row=4,col=1)
     fig.add_trace(go.Scatter(x=idx,y=ind["_macd"],line=dict(color="#42A5F5",width=1),showlegend=False),row=4,col=1)
     fig.add_trace(go.Scatter(x=idx,y=ind["_macd_sig"],line=dict(color="#FF7043",width=1),showlegend=False),row=4,col=1)
 
-    # 蒙地卡羅(第5列)
     if mc_data:
         mc_row = 5
         fd = mc_data["dates"]
@@ -1062,7 +1044,6 @@ def build_main_chart(hist, ind, entry, sym, mc_data=None, buy_markers=None):
             showlegend=False,fill="tonexty",fillcolor="rgba(100,180,255,0.12)"),row=mc_row,col=1)
         fig.add_trace(go.Scatter(x=fd,y=p["p50"],line=dict(color="#FFD700",width=2),
             name="中位數路徑"),row=mc_row,col=1)
-        # 加幾條樣本路徑
         for path in mc_data["matrix_sample"][:5]:
             fig.add_trace(go.Scatter(x=fd,y=path,
                 line=dict(color="rgba(200,200,200,0.1)",width=0.5),showlegend=False),row=mc_row,col=1)
@@ -1075,11 +1056,10 @@ def build_main_chart(hist, ind, entry, sym, mc_data=None, buy_markers=None):
     return fig
 
 def build_heatmap_chart(df: pd.DataFrame, market: str):
-    """板塊熱力圖(台灣色系)"""
     if df.empty: return None
     fig = px.treemap(df,path=["板塊","名稱"],values="市值",
         color="漲跌%",
-        color_continuous_scale=[(0.0,TW_DOWN),(0.5,"#333333"),(1.0,TW_UP)],  # 台灣色系
+        color_continuous_scale=[(0.0,TW_DOWN),(0.5,"#333333"),(1.0,TW_UP)],
         color_continuous_midpoint=0,
         custom_data=["代號","漲跌%"],
         title=f"{'台股' if '台股' in market else '美股'} 板塊熱力圖(🔴漲 🟢跌)",
@@ -1093,7 +1073,6 @@ def build_heatmap_chart(df: pd.DataFrame, market: str):
     return fig
 
 def build_portfolio_sunburst(portfolio: dict, sector_map: dict) -> go.Figure:
-    """持股板塊旭日圖"""
     rows = []
     for sym,data in portfolio.items():
         cost_val = data["cost"]*data["shares"]
@@ -1122,7 +1101,6 @@ def build_dca_chart(df_dca: pd.DataFrame, sym: str) -> go.Figure:
     return fig
 
 def build_mc_standalone(mc_data: dict, sym: str) -> go.Figure:
-    """獨立蒙地卡羅圖"""
     fig = go.Figure()
     fd = mc_data["dates"]; p = mc_data["pcts"]
     fig.add_trace(go.Scatter(x=fd,y=p["p97"],line=dict(color="rgba(255,200,50,0.3)",width=1),name="95%區間上界"))
@@ -1198,7 +1176,6 @@ with st.sidebar:
             for k in ["alerts","portfolio"]: st.session_state[k]={}
             st.rerun()
 
-    # API Key
     st.divider()
     if st.session_state.logged_in and st.session_state.api_key:
         st.success("🔑 API 金鑰已自動帶入")
@@ -1225,7 +1202,6 @@ with st.sidebar:
         help="區間越長，趨勢判斷越可靠")
     st.caption("⏱️ 數據每5分鐘更新")
 
-    # 宏觀制度
     st.divider()
     st.header("🌍 宏觀制度設定")
     macro_regime = st.selectbox("當前宏觀制度",MACRO_REGIMES,
@@ -1236,7 +1212,6 @@ with st.sidebar:
         with st.spinner("搜尋中..."):
             try:
                 regime_rpt = ai_macro_regime(api_key)
-                # 嘗試解析
                 for r in MACRO_REGIMES[1:]:
                     if r in regime_rpt:
                         st.session_state.macro_regime=r
@@ -1245,7 +1220,6 @@ with st.sidebar:
                 with st.expander("查看AI制度分析"): st.markdown(regime_rpt)
             except Exception as e: st.error(str(e)[:50])
 
-    # 自選股
     st.divider()
     st.header("⭐ 自選股")
     nw = st.text_input("新增代號",placeholder="如2330或AAPL",key="sb_nw",
@@ -1263,7 +1237,6 @@ with st.sidebar:
             if st.session_state.logged_in: db_del_wl(st.session_state.user_id,s)
             st.session_state.watchlist.pop(i); st.rerun()
 
-    # 警報
     st.divider()
     st.header("🔔 警報")
     al_s=st.text_input("代號",key="al_s",help="設定到達特定價格時提醒")
@@ -1284,7 +1257,6 @@ with st.sidebar:
             if st.session_state.logged_in: db_del_alert(st.session_state.user_id,sa3)
             del st.session_state.alerts[sa3]; st.rerun()
 
-    # 名詞解釋
     st.divider()
     st.header("📖 名詞解釋")
     for term,desc in GLOSSARY.items():
@@ -1296,7 +1268,6 @@ with st.sidebar:
 st.title("📈 股市小白分析系統 Pro V2")
 st.caption("AI三方辯論 × 蒙地卡羅模擬 × 行為偏誤診斷 × 機構級量化 × 🔴紅漲🟢跌(台灣色系)")
 
-# 大盤列
 mkt = fetch_market_overview()
 if mkt:
     mcols = st.columns(len(mkt))
@@ -1304,9 +1275,8 @@ if mkt:
         chg=row["漲跌%"]
         col.metric(row["名稱"],str(row["現值"]),
             f"{'▲' if chg>=0 else '▼'}{abs(chg):.2f}%",
-            delta_color="inverse")  # 台灣色系: inverse
+            delta_color="inverse")
 
-# 最近查詢
 if st.session_state.recent_searches:
     st.markdown("**🕐 最近查詢: **")
     rc=st.columns(min(len(st.session_state.recent_searches),8))
@@ -1315,7 +1285,6 @@ if st.session_state.recent_searches:
             st.session_state.quick_sym=rs.replace(".TW","")
             st.session_state.auto_analyze=True; st.rerun()
 
-# 宏觀制度橫幅
 regime_colors={"成長擴張(Risk-On)":"#cc2222","復甦反彈(Early Cycle)":"#aa3333",
                "通膨衰退(Stagflation)":"#446644","衰退(Risk-Off)":"#228844",
                "流動性危機":"#4422aa","未知":"#444444"}
@@ -1333,7 +1302,6 @@ TABS = st.tabs(["📊 個股戰情室","💼 我的資產庫","📊 選股+回�
 # TAB 1: 個股戰情室
 # ══════════════════════════════════════════════
 with TABS[0]:
-    # 快速選股
     st.markdown("### 🚀 快速選股")
     hot = TW_HOT if "台股" in market else US_HOT
     for cat,stocks in hot.items():
@@ -1354,18 +1322,15 @@ with TABS[0]:
         st.write(""); st.write("")
         go_btn = st.button("🔍 開始分析",use_container_width=True,type="primary")
 
-    # 💡 狀態記憶修復: 避免輸入框重新整理導致畫面消失
     if "current_sym" not in st.session_state:
         st.session_state.current_sym = ""
 
-    # 當按下開始分析，或從快速選股點擊時，更新當前股票
     if go_btn and ticker_in.strip():
         st.session_state.current_sym = ticker_in.strip()
     elif st.session_state.auto_analyze and st.session_state.quick_sym:
         st.session_state.current_sym = st.session_state.quick_sym
         st.session_state.auto_analyze = False
 
-    # 只要 current_sym 有值，就保持分析畫面
     if st.session_state.current_sym:
         use_sym = st.session_state.current_sym
         if not api_key: st.warning("⚠️ 請先輸入 Gemini API 金鑰"); st.stop()
@@ -1382,7 +1347,6 @@ with TABS[0]:
         co    = info.get("longName") or info.get("shortName") or sym
         ts    = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-        # 警報
         if sym in st.session_state.alerts:
             a=st.session_state.alerts[sym]
             if a.get("above") and ind["price"]>=a["above"]:
@@ -1390,7 +1354,6 @@ with TABS[0]:
             if a.get("below") and ind["price"]<=a["below"]:
                 st.error(f"🔔 警報！{sym} 跌破 {a['below']}，現價 {ind['price']}")
 
-        # 即將到來的財報/除息警報
         try:
             t_obj = yf.Ticker(sym)
             cal   = t_obj.calendar
@@ -1403,7 +1366,6 @@ with TABS[0]:
                                         unsafe_allow_html=True)
         except: pass
 
-        # 標題列
         hc,sc_col=st.columns([5,1])
         with hc:
             st.subheader(f"📌 {co}({sym})")
@@ -1416,7 +1378,6 @@ with TABS[0]:
                     st.success("✅")
             else: st.success("⭐ 追蹤中")
 
-        # 評分 + 指標
         score_col, kpi_col = st.columns([1,2])
         with score_col:
             st.markdown(f"""
@@ -1436,7 +1397,6 @@ with TABS[0]:
                 <h3 style="margin:0;color:#e2e8f0">{ind['sc']} {ind['status']}</h3>
                 <p style="margin:5px 0 0;color:#94a3b8;font-size:13px">{ind['status_desc']}</p>
             </div>""",unsafe_allow_html=True)
-            # 台灣色系: 漲=紅=inverse
             ci="🔴" if ind["change_pct"]>=0 else "🟢"
             r1,r2,r3 = st.columns(3)
             r1.metric("💰 現價",  ind["price"])
@@ -1449,7 +1409,6 @@ with TABS[0]:
 
         st.divider()
 
-        # 指標解讀
         with st.expander("🔍 各指標白話解讀", expanded=True):
             ia,ib,ic_ = st.columns(3)
             with ia:
@@ -1467,7 +1426,6 @@ with TABS[0]:
 
         st.divider()
 
-        # 入場策略
         with st.expander("💰 入場策略參考(⚠️ 僅供參考，不構成投資建議)", expanded=True):
             e1,e2,e3 = st.columns(3)
             with e1:
@@ -1500,7 +1458,6 @@ with TABS[0]:
 
         st.divider()
 
-        # 圖表 + 蒙地卡羅選項
         st.markdown("### 📈 技術分析圖表")
         show_mc = st.checkbox("🎲 開啟蒙地卡羅30日模擬(幾何布朗運動)",
                               help="顯示基於歷史波動率的30日價格機率錐形區間，需要額外幾秒計算")
@@ -1508,16 +1465,17 @@ with TABS[0]:
         if mc_data:
             st.caption(f"蒙地卡羅參數: 日均報酬率={mc_data['mu']:.4f}，日波動率σ={mc_data['sigma']:.4f}，模擬2000條路徑")
 
-        # 買入標記(從持股記錄)
         buy_markers = []
         if sym in st.session_state.portfolio:
-            pd2 = st.session_state.portfolio[sym]
-            if pd2.get("buy_date"):
-                try:
-                    bdate = pd.to_datetime(pd2["buy_date"])
-                    if bdate.tz: bdate=bdate.tz_localize(None)
-                    buy_markers.append({"date":bdate,"price":pd2["cost"]})
-                except: pass
+            entries = st.session_state.portfolio[sym]
+            if isinstance(entries, dict): entries = [entries] 
+            for pd2 in entries:
+                if pd2.get("buy_date"):
+                    try:
+                        bdate = pd.to_datetime(pd2["buy_date"])
+                        if bdate.tz: bdate=bdate.tz_localize(None)
+                        buy_markers.append({"date":bdate,"price":pd2.get("cost")})
+                    except: pass
 
         st.plotly_chart(build_main_chart(hist,ind,entry,sym,mc_data,buy_markers if buy_markers else None),
                         use_container_width=True)
@@ -1539,7 +1497,6 @@ with TABS[0]:
 
         st.divider()
 
-        # AI 三方辯論(核心功能)
         st.markdown("### [AI] AI 三方辯論分析")
         st.markdown(f"""
         <div style="background:#1e1e2e;border-radius:10px;padding:12px;margin:8px 0;border:1px solid #3a3a5e">
@@ -1624,7 +1581,6 @@ with TABS[1]:
 
     asset_tab1,asset_tab2,asset_tab3 = st.tabs(["💼 持股損益","⭐ 自選股","📋 交易記錄"])
 
-# ── 持股損益 ──
     with asset_tab1:
         st.markdown("### 💼 持股損益試算")
         p1,p2,p3,p4,p5 = st.columns(5)
@@ -1636,14 +1592,12 @@ with TABS[1]:
             st.write(""); st.write("")
             p_btn=st.button("📊 計算",use_container_width=True,type="primary",key="pf_calc")
 
-        # 💡 修復 Bug 1: 用 session_state 記住計算狀態，避免按按鈕後消失
         if "show_pf_calc" not in st.session_state:
             st.session_state.show_pf_calc = False
         
         if p_btn:
             st.session_state.show_pf_calc = True
 
-        # 如果處於計算狀態，就顯示卡片與分析按鈕
         if st.session_state.show_pf_calc and ps_.strip() and pc_>0 and pn_>0:
             ps_sym=get_sym(ps_.strip(),market)
             ph_,pi_,pe_=fetch_data(ps_sym,"5d")
@@ -1675,14 +1629,12 @@ with TABS[1]:
                     </p>
                 </div>""",unsafe_allow_html=True)
 
-                # AI覆盤教練
                 if api_key:
                     if st.button("[AI] AI交易覆盤教練",key="review_btn",type="primary"):
                         _h2,_,_=fetch_data(ps_sym,"6mo")
                         if _h2 is not None:
                             _ind2=calc_indicators(_h2)
                             _en2=calc_entry(_ind2,_h2)
-                            # 買入當日指標(重建)
                             try:
                                 _h2_idx=_h2.copy(); _h2_idx.index=pd.to_datetime(_h2_idx.index)
                                 if _h2_idx.index.tz: _h2_idx.index=_h2_idx.index.tz_localize(None)
@@ -1706,30 +1658,26 @@ with TABS[1]:
                 with c1_s:
                     if st.session_state.logged_in:
                         if st.button("💾 存入持股記錄",key="save_pf"):
-                            # 💡 檢查是否已經持有該股票，若有則進行加權平均計算
                             if ps_sym in st.session_state.portfolio:
-                                old_data = st.session_state.portfolio[ps_sym]
-                                old_cost = old_data["cost"]
-                                old_shares = old_data["shares"]
+                                entries = st.session_state.portfolio[ps_sym]
+                                if isinstance(entries, dict): entries = [entries]
                                 
-                                # 計算新的總股數與加權平均成本
+                                old_shares = sum(e.get("shares", 0) for e in entries)
+                                old_cost_total = sum(e.get("cost", 0) * e.get("shares", 0) for e in entries)
+                                
                                 total_shares = old_shares + pn_
-                                if total_shares > 0:
-                                    avg_cost = ((old_cost * old_shares) + (pc_ * pn_)) / total_shares
-                                else:
-                                    avg_cost = 0
+                                avg_cost = (old_cost_total + (pc_ * pn_)) / total_shares if total_shares > 0 else 0
                                 
                                 new_cost = round(avg_cost, 2)
                                 new_shares = total_shares
                                 success_msg = f"✅ 已加碼合併！新均價: {new_cost}，總計: {new_shares} 股"
+                                
+                                st.session_state.portfolio[ps_sym] = entries + [{"cost": pc_, "shares": pn_, "note": "", "buy_date": str(pd_)}]
                             else:
-                                new_cost = pc_
-                                new_shares = pn_
                                 success_msg = "✅ 已新增持股記錄"
+                                st.session_state.portfolio[ps_sym] = [{"cost": pc_, "shares": pn_, "note": "", "buy_date": str(pd_)}]
 
-                            # 寫入更新後的數據到資料庫與暫存
-                            db_save_port(st.session_state.user_id, ps_sym, new_cost, new_shares, "", str(pd_))
-                            st.session_state.portfolio[ps_sym] = {"cost": new_cost, "shares": new_shares, "note": "", "buy_date": str(pd_)}
+                            db_save_port(st.session_state.user_id, ps_sym, pc_, pn_, "", str(pd_))
                             st.success(success_msg)
                 with c2_s:
                     if ps_sym in st.session_state.portfolio:
@@ -1737,11 +1685,9 @@ with TABS[1]:
                             db_del_port(st.session_state.user_id,ps_sym)
                             del st.session_state.portfolio[ps_sym]
                             st.success("✅ 已移除")
-                            st.session_state.show_pf_calc = False # 移除後關閉試算卡片
+                            st.session_state.show_pf_calc = False 
                             st.rerun()
 
-        # 💡 修復 Bug 2: 把持股總覽「移出」計算條件外，確保只要有庫存就一定顯示
-        # 💡 方案 B: 動態加總與分筆刪除區塊
         if st.session_state.portfolio:
             st.divider()
             st.markdown("### 📋 持股組合總覽")
@@ -1749,10 +1695,8 @@ with TABS[1]:
             pr_rows = []; tc_all = 0; cv_all = 0
             
             for sym, entries in st.session_state.portfolio.items():
-                # 防呆: 確保 entries 是列表(如果抓到舊版資料，自動包裝成列表)
                 if isinstance(entries, dict): entries = [entries]
                 
-                # 動態加總 list 裡面的股數和成本，計算精準均價
                 total_s = sum(e.get("shares", 0) for e in entries)
                 total_c = sum(e.get("cost", 0) * e.get("shares", 0) for e in entries)
                 avg_c = round(total_c / total_s, 2) if total_s > 0 else 0
@@ -1783,12 +1727,10 @@ with TABS[1]:
                 tp = cv_all - tc_all; tpct = round(tp / max(tc_all, 1) * 100, 2)
                 st.metric("📊 組合總損益", f"{tp:+,.0f}元", delta=f"{tpct:+.2f}%", delta_color="inverse")
 
-                # 旭日圖
                 fake_port_for_chart = {r["代號"]: {"cost": r["均價"], "shares": r["總股數"]} for r in pr_rows}
                 sb_fig = build_portfolio_sunburst(fake_port_for_chart, sector_map)
                 if sb_fig: st.plotly_chart(sb_fig, use_container_width=True)
 
-                # AI 投資長 CIO
                 if api_key:
                     if st.button("🏦 AI投資長(CIO)組合審查", type="primary", key="cio_btn"):
                         port_str = "\n".join([f"- {r['代號']}: 成本{r['均價']} 現價{r['現價']} 損益{r['損益%']} 板塊{r.get('板塊','未知')}" for r in pr_rows])
@@ -1805,7 +1747,6 @@ with TABS[1]:
                                         st.markdown(lines[1] if len(lines) > 1 else "")
                             except Exception as e: st.error(str(e)[:80])
 
-            # 👇 方案 B: 雙層選單分筆刪除功能
             st.divider()
             st.markdown("#### 🗑️ 刪除特定買入記錄")
             del_c1, del_c2 = st.columns([2, 2])
@@ -1815,31 +1756,27 @@ with TABS[1]:
             with del_c2:
                 if target_sym:
                     entries = st.session_state.portfolio[target_sym]
-                    if isinstance(entries, dict): entries = [entries] # 防呆
+                    if isinstance(entries, dict): entries = [entries] 
                     
-                    # 格式化顯示文字
                     entry_options = {f"買入價 {e.get('cost','?')} | {e.get('shares','?')}股 | 日期 {e.get('buy_date','')}": e for e in entries}
                     selected_label = st.selectbox("2. 選擇要刪除的特定筆數", options=list(entry_options.keys()))
                     to_delete = entry_options[selected_label]
             
             if target_sym:
                 if st.button("❌ 確認刪除此筆記錄"):
-                    # 1. 從資料庫刪除
                     if st.session_state.logged_in and "db_id" in to_delete:
                         db_del_port_by_id(st.session_state.user_id, to_delete["db_id"])
                     
-                    # 2. 從本地暫存中移除該筆
                     if isinstance(st.session_state.portfolio[target_sym], list):
                         st.session_state.portfolio[target_sym].remove(to_delete)
                         if not st.session_state.portfolio[target_sym]:
                             del st.session_state.portfolio[target_sym]
                     else:
-                        del st.session_state.portfolio[target_sym] # 舊資料防呆刪除
+                        del st.session_state.portfolio[target_sym] 
                         
                     st.success(f"✅ 已成功刪除一筆 {target_sym} 記錄")
                     st.rerun()
 
-    # ── 自選股 ──
     with asset_tab2:
         st.markdown("### ⭐ 自選股即時監控")
         if not st.session_state.watchlist:
@@ -1858,7 +1795,6 @@ with TABS[1]:
             for i,s in enumerate(st.session_state.watchlist[:6]):
                 if bcols[i].button(f"📊{s}",key=f"wa_{i}",use_container_width=True):
                     st.session_state.quick_sym=s.replace(".TW",""); st.session_state.auto_analyze=True; st.rerun()
-            # 雙重確認
             if not st.session_state.confirm_clear_watch:
                 if st.button("🗑️ 清空自選股",key="clr_wl"): st.session_state.confirm_clear_watch=True; st.rerun()
             else:
@@ -1870,12 +1806,10 @@ with TABS[1]:
                     st.session_state.watchlist=[]; st.session_state.confirm_clear_watch=False; st.rerun()
                 if cc2.button("❌取消",key="cw_can"): st.session_state.confirm_clear_watch=False; st.rerun()
 
-    # ── 交易記錄(已平倉)──
     with asset_tab3:
         st.markdown("### 📋 已平倉交易記錄")
         st.caption("記錄已出場的交易，用於計算績效與行為分析")
 
-        # 新增交易記錄
         with st.expander("➕ 新增已平倉交易"):
             t1,t2,t3,t4 = st.columns(4)
             with t1: t_sym=st.text_input("代號",key="th_sym")
@@ -1895,7 +1829,6 @@ with TABS[1]:
                     st.session_state.trade_history=db_load_trades(st.session_state.user_id) if st.session_state.logged_in else st.session_state.trade_history+[{"symbol":ts_sym,"direction":"LONG","entry_price":t_ep,"exit_price":t_xp,"shares":t_sh,"entry_date":str(t_ed),"exit_date":str(t_xd),"pnl_amount":pnl_a,"pnl_pct":pnl_p,"note":t_note}]
                     st.success(f"✅ 已記錄 {ts_sym}，損益: {pnl_a:+,.0f}元({pnl_p:+.2f}%)")
 
-        # 顯示記錄
         trades = st.session_state.trade_history
         if trades:
             tr_df=pd.DataFrame([{
@@ -1916,7 +1849,6 @@ with TABS[1]:
             st.metric("📊 累積損益",f"{total_pnl_t:+,.0f}元",
                       delta=f"勝率{round(win_t/max(len(trades),1)*100,1)}%",delta_color="inverse")
 
-            # 雙重確認清空
             if not st.session_state.confirm_clear_trades:
                 if st.button("🗑️ 清空全部記錄"): st.session_state.confirm_clear_trades=True; st.rerun()
             else:
@@ -2056,7 +1988,6 @@ with TABS[4]:
         bias=analyze_behavioral_bias(trades)
         if not bias: st.warning("數據不足以分析"); st.stop()
 
-        # 統計儀表板
         b1,b2,b3,b4 = st.columns(4)
         b1.metric("勝率",f"{bias['win_rate']}%",help="獲利交易/總交易次數")
         b2.metric("平均獲利",f"+{bias['avg_win_pct']:.2f}%",help="獲利交易的平均報酬率")
@@ -2072,7 +2003,6 @@ with TABS[4]:
                   delta_color="off")
         b7.metric("總交易次數",f"{bias['win_count']+bias['lose_count']}次")
 
-        # 處置效應警告
         if bias["disposition_effect"]:
             st.markdown("""
             <div style="background:#3a0000;border-radius:12px;padding:16px;margin:12px 0;
@@ -2085,7 +2015,6 @@ with TABS[4]:
                 </p>
             </div>""",unsafe_allow_html=True)
 
-        # 交易記錄視覺化
         if len(trades)>=2:
             tr_viz=pd.DataFrame([{
                 "交易":f"{t.get('symbol','')}({t.get('exit_date','')})",
@@ -2102,7 +2031,6 @@ with TABS[4]:
             fig_tr.update_layout(height=400)
             st.plotly_chart(fig_tr,use_container_width=True)
 
-        # AI 行為偏誤報告
         if api_key:
             if st.button("🧠 AI 深度行為偏誤診斷",type="primary"):
                 trades_summary="\n".join([
