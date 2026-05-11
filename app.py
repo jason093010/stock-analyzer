@@ -44,18 +44,10 @@ except Exception:
     pass
 
 # ══════════════════════════════════════════════
-# 3. CSS（台灣色系：紅漲綠跌）
+# 3. CSS(台灣色系: 紅漲綠跌)
 # ══════════════════════════════════════════════
 st.markdown("""
 <style>
-/* ── 🌟 修復下拉選單被遮擋/重疊的問題 ── */
-div[data-baseweb="popover"] {
-    z-index: 99999 !important;
-}
-.stSelectbox div[data-baseweb="select"] {
-    overflow: visible !important;
-}
-
 /* ── 響應式 ── */
 @media(max-width:768px){
   h1{font-size:1rem!important} h3{font-size:0.85rem!important}
