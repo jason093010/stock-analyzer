@@ -230,6 +230,11 @@ def db_del_port_by_id(uid, db_id):
     try:
         _supabase.table("portfolio").delete().eq("id", db_id).eq("user_id", uid).execute()
     except: pass
+def db_del_port(uid, sym):
+    if not HAS_DB: return
+    try:
+        _supabase.table("portfolio").delete().eq("user_id", uid).eq("symbol", sym).execute()
+    except: pass    
 
 # ── Trade History ──
 def db_load_trades(uid):
