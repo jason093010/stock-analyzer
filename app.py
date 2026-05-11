@@ -1758,7 +1758,7 @@ with TABS[1]:
                 # AI 投資長 CIO
                 if api_key:
                     if st.button("🏦 AI投資長（CIO）組合審查", type="primary", key="cio_btn"):
-                        port_str = "\n".join([f"- {r['代號']}：成本{r['均價']} 現價{r['現價']} 損益{r['損益%']} 板塊{r.get('板塊','未知')}" for r in pr_rows])
+                        port_str = "\n".join([f"- {r['代號']}: 成本{r['均價']} 現價{r['現價']} 損益{r['損益%']} 板塊{r.get('板塊','未知')}" for r in pr_rows])
                         sec_count = {}
                         for r in pr_rows: sec_count[r.get("板塊","其他")] = sec_count.get(r.get("板塊","其他"), 0) + 1
                         with st.spinner("AI投資長審查中（含即時搜尋）..."):
