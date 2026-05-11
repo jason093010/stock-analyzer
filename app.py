@@ -191,19 +191,37 @@ def db_del_alert(uid,sym):
 # ── Portfolio ──
 def db_load_port(uid):
     if not HAS_DB: return {}
-    try: return {x["symbol"]:{"cost":x["cost_price"],"shares":x["shares"],"note":x.get("note",""),"buy_date":x.get("buy_date","")} for x in _supabase.table("portfolio").select("*").eq("user_id",uid).execute().data}
+    try:
+        # 改成抓取所有原始列資料
+        data = _supabase.table("portfolio").select("*").eq("user_id", uid).execute().data
+        # 整理成以 symbol 為 key，內容為 list 的格式
+        port = {}
+        for x in data:
+            sym = x["symbol"]
+            if sym not in port: port[sym] = []
+            port[sym].append({
+                "db_id": x["id"], # 存下資料庫的唯一 ID 用於刪除
+                "cost": x["cost_price"],
+                "shares": x["shares"],
+                "note": x.get("note",""),
+                "buy_date": x.get("buy_date","")
+            })
+        return port
     except: return {}
-def db_save_port(uid,sym,cost,shares,note="",buy_date=""):
+def db_save_port(uid, sym, cost, shares, note="", buy_date=""):
     if not HAS_DB: return
     try:
-        d={"user_id":uid,"symbol":sym,"cost_price":cost,"shares":shares,"note":note,"buy_date":buy_date}
-        ex=_supabase.table("portfolio").select("id").eq("user_id",uid).eq("symbol",sym).execute()
-        if ex.data: _supabase.table("portfolio").update(d).eq("user_id",uid).eq("symbol",sym).execute()
-        else: _supabase.table("portfolio").insert(d).execute()
+        # 直接插入新的一列，不再檢查重複
+        _supabase.table("portfolio").insert({
+            "user_id": uid, "symbol": sym, 
+            "cost_price": cost, "shares": shares, 
+            "note": note, "buy_date": buy_date
+        }).execute()
     except: pass
-def db_del_port(uid,sym):
+def db_del_port_by_id(uid, db_id):
     if not HAS_DB: return
-    try: _supabase.table("portfolio").delete().eq("user_id",uid).eq("symbol",sym).execute()
+    try:
+        _supabase.table("portfolio").delete().eq("id", db_id).eq("user_id", uid).execute()
     except: pass
 
 # ── Trade History ──
@@ -1690,73 +1708,103 @@ with TABS[1]:
                             st.rerun()
 
         # 💡 修復 Bug 2：把持股總覽「移出」計算條件外，確保只要有庫存就一定顯示
+        # 💡 方案 B：動態加總與分筆刪除區塊
         if st.session_state.portfolio:
             st.divider()
             st.markdown("### 📋 持股組合總覽")
-            sector_map={}
-            pr_rows=[]; tc_all=0; cv_all=0
-            for ps2,pd2 in st.session_state.portfolio.items():
+            sector_map = {}
+            pr_rows = []; tc_all = 0; cv_all = 0
+            
+            for sym, entries in st.session_state.portfolio.items():
+                # 防呆：確保 entries 是列表（如果抓到舊版資料，自動包裝成列表）
+                if isinstance(entries, dict): entries = [entries]
+                
+                # 動態加總 list 裡面的股數和成本，計算精準均價
+                total_s = sum(e.get("shares", 0) for e in entries)
+                total_c = sum(e.get("cost", 0) * e.get("shares", 0) for e in entries)
+                avg_c = round(total_c / total_s, 2) if total_s > 0 else 0
+                
                 try:
-                    hh2=yf.Ticker(ps2).history(period="2d")
+                    hh2 = yf.Ticker(sym).history(period="2d")
                     if not hh2.empty:
-                        cp2=round(float(hh2["Close"].iloc[-1]),2)
-                        p2=round((cp2-pd2["cost"])/max(pd2["cost"],0.01)*100,2)
-                        c2=round(pd2["cost"]*pd2["shares"],0); v2=round(cp2*pd2["shares"],0)
-                        hd2=""
-                        if pd2.get("buy_date"):
-                            try: hd2=f"{(date.today()-date.fromisoformat(pd2['buy_date'])).days}天"
-                            except: pass
-                        try: sec=yf.Ticker(ps2).info.get("sector","其他") or "其他"
-                        except: sec="其他"
-                        sector_map[ps2]=sec
-                        pr_rows.append({"代號":ps2,"成本":pd2["cost"],"現價":cp2,
-                                        "損益%":f"{p2:+.2f}%","總損益":f"{v2-c2:+,.0f}",
-                                        "股數":pd2["shares"],"板塊":sec,"持有":hd2})
-                        tc_all+=c2; cv_all+=v2
+                        cp2 = round(float(hh2["Close"].iloc[-1]), 2)
+                        pnl_pct = round((cp2 - avg_c) / max(avg_c, 0.01) * 100, 2)
+                        v2 = round(cp2 * total_s, 0)
+                        c2 = round(total_c, 0)
+                        
+                        try: sec = yf.Ticker(sym).info.get("sector", "其他") or "其他"
+                        except: sec = "其他"
+                        sector_map[sym] = sec
+                        
+                        pr_rows.append({
+                            "代號": sym, "均價": avg_c, "現價": cp2,
+                            "損益%": f"{pnl_pct:+.2f}%", "總損益": f"{v2-c2:+,.0f}",
+                            "總股數": total_s, "板塊": sec
+                        })
+                        tc_all += c2
+                        cv_all += v2
                 except: pass
             
             if pr_rows:
-                st.dataframe(pd.DataFrame(pr_rows),use_container_width=True,hide_index=True)
-                tp=cv_all-tc_all; tpct=round(tp/max(tc_all,1)*100,2)
-                st.metric("📊 組合總損益",f"{tp:+,.0f}元",delta=f"{tpct:+.2f}%",delta_color="inverse")
+                st.dataframe(pd.DataFrame(pr_rows), use_container_width=True, hide_index=True)
+                tp = cv_all - tc_all; tpct = round(tp / max(tc_all, 1) * 100, 2)
+                st.metric("📊 組合總損益", f"{tp:+,.0f}元", delta=f"{tpct:+.2f}%", delta_color="inverse")
 
-                sb_fig=build_portfolio_sunburst(st.session_state.portfolio,sector_map)
-                if sb_fig: st.plotly_chart(sb_fig,use_container_width=True)
+                # 旭日圖
+                fake_port_for_chart = {r["代號"]: {"cost": r["均價"], "shares": r["總股數"]} for r in pr_rows}
+                sb_fig = build_portfolio_sunburst(fake_port_for_chart, sector_map)
+                if sb_fig: st.plotly_chart(sb_fig, use_container_width=True)
 
+                # AI 投資長 CIO
                 if api_key:
-                    if st.button("🏦 AI投資長（CIO）組合審查",type="primary",key="cio_btn"):
-                        port_str="\n".join([f"- {r['代號']}：成本{r['成本']} 現價{r['現價']} 損益{r['損益%']} 板塊{r.get('板塊','未知')}" for r in pr_rows])
-                        sec_count={}
-                        for r in pr_rows: sec_count[r.get("板塊","其他")]=sec_count.get(r.get("板塊","其他"),0)+1
-                        sec_str=str(sec_count)
+                    if st.button("🏦 AI投資長（CIO）組合審查", type="primary", key="cio_btn"):
+                        port_str = "\n".join([f"- {r['代號']}：成本{r['均價']} 現價{r['現價']} 損益{r['損益%']} 板塊{r.get('板塊','未知')}" for r in pr_rows])
+                        sec_count = {}
+                        for r in pr_rows: sec_count[r.get("板塊","其他")] = sec_count.get(r.get("板塊","其他"), 0) + 1
                         with st.spinner("AI投資長審查中（含即時搜尋）..."):
                             try:
-                                cio_rpt=ai_portfolio_cio(port_str,sec_str,api_key)
-                                secs=cio_rpt.split("\n## ")
+                                cio_rpt = ai_portfolio_cio(port_str, str(sec_count), api_key)
+                                secs = cio_rpt.split("\n## ")
                                 st.markdown(secs[0])
                                 for sec in secs[1:]:
-                                    lines=sec.split("\n",1)
-                                    with st.expander(f"## {lines[0]}",expanded=True):
-                                        st.markdown(lines[1] if len(lines)>1 else "")
+                                    lines = sec.split("\n", 1)
+                                    with st.expander(f"## {lines[0]}", expanded=True):
+                                        st.markdown(lines[1] if len(lines) > 1 else "")
                             except Exception as e: st.error(str(e)[:80])
 
-            # 👇 替換成這段：精準下拉選單刪除功能
+            # 👇 方案 B：雙層選單分筆刪除功能
             st.divider()
-            st.markdown("#### 🗑️ 刪除特定持股記錄")
-            del_c1, del_c2 = st.columns([3, 1])
+            st.markdown("#### 🗑️ 刪除特定買入記錄")
+            del_c1, del_c2 = st.columns([2, 2])
             with del_c1:
-                # 使用下拉式選單列出帳上所有的股票代號
-                del_target = st.selectbox("請選擇輸入錯誤、或想要移除的股票", options=list(st.session_state.portfolio.keys()))
+                target_sym = st.selectbox("1. 選擇股票代號", options=list(st.session_state.portfolio.keys()))
+            
             with del_c2:
-                st.write("") # 往下推兩格，為了對齊左邊的選單
-                st.write("")
-                if st.button("❌ 刪除此檔股票", use_container_width=True):
-                    if del_target in st.session_state.portfolio:
-                        if st.session_state.logged_in:
-                            db_del_port(st.session_state.user_id, del_target)
-                        del st.session_state.portfolio[del_target] # 從暫存中刪除
-                        st.success(f"✅ 已成功移除 {del_target}")
-                        st.rerun()
+                if target_sym:
+                    entries = st.session_state.portfolio[target_sym]
+                    if isinstance(entries, dict): entries = [entries] # 防呆
+                    
+                    # 格式化顯示文字
+                    entry_options = {f"買入價 {e.get('cost','?')} | {e.get('shares','?')}股 | 日期 {e.get('buy_date','')}": e for e in entries}
+                    selected_label = st.selectbox("2. 選擇要刪除的特定筆數", options=list(entry_options.keys()))
+                    to_delete = entry_options[selected_label]
+            
+            if target_sym:
+                if st.button("❌ 確認刪除此筆記錄"):
+                    # 1. 從資料庫刪除
+                    if st.session_state.logged_in and "db_id" in to_delete:
+                        db_del_port_by_id(st.session_state.user_id, to_delete["db_id"])
+                    
+                    # 2. 從本地暫存中移除該筆
+                    if isinstance(st.session_state.portfolio[target_sym], list):
+                        st.session_state.portfolio[target_sym].remove(to_delete)
+                        if not st.session_state.portfolio[target_sym]:
+                            del st.session_state.portfolio[target_sym]
+                    else:
+                        del st.session_state.portfolio[target_sym] # 舊資料防呆刪除
+                        
+                    st.success(f"✅ 已成功刪除一筆 {target_sym} 記錄")
+                    st.rerun()
 
     # ── 自選股 ──
     with asset_tab2:
