@@ -314,94 +314,113 @@ def pct_fmt(v):
     return f"{v*100:.1f}%" if isinstance(v,float) and v==v else "N/A"
 
 # ══════════════════════════════════════════════
-# 9. 數據抓取(快取 + ThreadPoolExecutor)
+# 9. 數據抓取(全域替換為 yf.download 批量下載，徹底解決 429 封鎖)
 # ══════════════════════════════════════════════
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_data(symbol: str, period: str):
-    for i in range(3):
+    try:
+        # 使用 download 替代 history，更穩定且支援批量，不易被鎖
+        h = yf.download(symbol, period=period, progress=False)
+        if h is None or h.empty: 
+            return None, None, "查無此代號或暫無數據"
+            
+        # 處理 yfinance 新版的 MultiIndex 格式
+        if isinstance(h.columns, pd.MultiIndex):
+            h.columns = [col[0] for col in h.columns]
+            
+        info = {}
         try:
+            # 這是最容易被鎖的端點，加入嚴格 try-except 保護
             t = yf.Ticker(symbol)
-            h = t.history(period=period)
-            info = t.info
-            if h.empty: return None, None, "查無此代號"
-            return h, info, None
-        except Exception as e:
-            if i==2: return None, None, f"抓取失敗: {str(e)[:50]}"
-            time.sleep(1)
+            info['longName'] = t.info.get('longName', symbol)
+            info['sector'] = t.info.get('sector', '其他')
+            info['trailingPE'] = t.info.get('trailingPE', 'N/A')
+            info['priceToBook'] = t.info.get('priceToBook', 'N/A')
+            info['beta'] = t.info.get('beta', 'N/A')
+        except:
+            info = {'longName': symbol, 'sector': '其他'}
+            
+        return h, info, None
+    except Exception as e:
+        return None, None, f"抓取失敗: {str(e)[:50]}"
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_market_overview():
     syms = {"台灣加權":"^TWII","S&P 500":"^GSPC","那斯達克":"^IXIC",
             "VIX恐慌":"^VIX","費城半導":"^SOX","美元指數":"DX-Y.NYB"}
+    tickers = list(syms.values())
     rows = []
-    def _fetch_one(name, sym):
-        try:
-            h = yf.Ticker(sym).history(period="2d")
-            if not h.empty and len(h)>=2:
-                p  = round(float(h["Close"].iloc[-1]),2)
-                ch = round((float(h["Close"].iloc[-1])-float(h["Close"].iloc[-2]))/
-                            max(float(h["Close"].iloc[-2]),0.01)*100,2)
-                return {"名稱":name,"現值":p,"漲跌%":ch}
-        except: pass
-        return None
-    with ThreadPoolExecutor(max_workers=6) as ex:
-        futs = {ex.submit(_fetch_one,n,s):(n,s) for n,s in syms.items()}
-        for f in as_completed(futs):
-            r = f.result()
-            if r: rows.append(r)
-    return sorted(rows, key=lambda x: list(syms.keys()).index(x["名稱"]))
+    try:
+        # 批量下載，發送 1 次請求取代 6 次
+        data = yf.download(tickers, period="2d", group_by="ticker", progress=False)
+        for name, sym in syms.items():
+            try:
+                df = data[sym] if len(tickers)>1 else data
+                if isinstance(df.columns, pd.MultiIndex): df.columns = [c[0] for c in df.columns]
+                if not df.empty and len(df)>=2:
+                    c1 = float(df["Close"].iloc[-2])
+                    c2 = float(df["Close"].iloc[-1])
+                    ch = round((c2 - c1) / max(c1, 0.01) * 100, 2)
+                    rows.append({"名稱":name, "現值":c2, "漲跌%":ch})
+            except: continue
+    except: pass
+    return sorted(rows, key=lambda x: list(syms.keys()).index(x["名稱"])) if rows else []
 
 @st.cache_data(ttl=60, show_spinner=False)
-def fetch_batch_quotes(symbols: list) -> dict:
-    """ThreadPoolExecutor 批量抓取自選股即時報價"""
+def fetch_batch_quotes(symbols: tuple) -> dict:
+    if not symbols: return {}
     results = {}
-    def _one(sym):
-        try:
-            h = yf.Ticker(sym).history(period="5d")
-            if not h.empty and len(h)>=2:
-                p  = round(float(h["Close"].iloc[-1]),2)
-                ch = round((float(h["Close"].iloc[-1])-float(h["Close"].iloc[-2]))/
-                            max(float(h["Close"].iloc[-2]),0.01)*100,2)
-                return sym,p,ch
-        except: pass
-        return sym,None,None
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        futs = [ex.submit(_one,s) for s in symbols]
-        for f in as_completed(futs):
-            sym_r,p_r,ch_r = f.result()
-            results[sym_r] = (p_r,ch_r)
+    try:
+        # 批量下載自選股，只發送 1 次請求
+        data = yf.download(list(symbols), period="5d", group_by="ticker", progress=False)
+        for sym in symbols:
+            try:
+                df = data[sym] if len(symbols)>1 else data
+                if isinstance(df.columns, pd.MultiIndex): df.columns = [c[0] for c in df.columns]
+                if not df.empty and len(df)>=2:
+                    c1 = float(df["Close"].iloc[-2])
+                    c2 = float(df["Close"].iloc[-1])
+                    ch = round((c2 - c1) / max(c1, 0.01) * 100, 2)
+                    results[sym] = (c2, ch)
+                else: results[sym] = (None, None)
+            except: results[sym] = (None, None)
+    except: pass
     return results
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_heatmap_data(market: str) -> pd.DataFrame:
-    """ThreadPoolExecutor 批量抓板塊熱力圖數據"""
     hot = TW_HOT if "台股" in market else US_HOT
-    tasks = []
+    tickers = []
+    sym_map = {}
     for sector, stocks in hot.items():
-        for sym_,name_ in stocks:
+        for sym_, name_ in stocks:
             full = sym_+".TW" if "台股" in market and not sym_.endswith(".TW") else sym_
-            tasks.append((sector,name_,full))
-
+            tickers.append(full)
+            sym_map[full] = (sector, name_)
+            
     rows = []
-    def _fetch_hm(sector,name,full):
-        try:
-            t = yf.Ticker(full)
-            h = t.history(period="2d")
-            info = t.info
-            if not h.empty and len(h)>=2:
-                ch = round((float(h["Close"].iloc[-1])-float(h["Close"].iloc[-2]))/
-                            max(float(h["Close"].iloc[-2]),0.01)*100,2)
-                mc = info.get("marketCap",1e9) or 1e9
-                return {"板塊":sector,"名稱":name,"代號":full.replace(".TW",""),
-                        "漲跌%":ch,"市值":mc}
-        except: pass
-        return None
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        futs = [ex.submit(_fetch_hm,s,n,f) for s,n,f in tasks]
-        for fut in as_completed(futs):
-            r = fut.result()
-            if r: rows.append(r)
-    return pd.DataFrame(rows) if rows else pd.DataFrame()
+    if not tickers: return pd.DataFrame()
+    
+    try:
+        # 批量下載，發送 1 次請求取代 16 次，且完全不呼叫最毒的 t.info
+        data = yf.download(tickers, period="2d", group_by="ticker", progress=False)
+        for full in tickers:
+            try:
+                df = data[full] if len(tickers)>1 else data
+                if isinstance(df.columns, pd.MultiIndex): df.columns = [c[0] for c in df.columns]
+                if not df.empty and len(df)>=2:
+                    c1 = float(df["Close"].iloc[-2])
+                    c2 = float(df["Close"].iloc[-1])
+                    if c1 > 0:
+                        ch = round((c2 - c1) / c1 * 100, 2)
+                        sector, name = sym_map[full]
+                        rows.append({
+                            "板塊": sector, "名稱": name, "代號": full.replace(".TW",""),
+                            "漲跌%": ch, "市值": 1e9 # 統一大小以防觸發 429
+                        })
+            except: continue
+    except: pass
+    return pd.DataFrame(rows)
 
 # ══════════════════════════════════════════════
 # 10. 技術指標計算(15項 + NaN全防護)
@@ -1180,17 +1199,17 @@ with st.sidebar:
         st.success("🔑 API 金鑰已自動帶入")
         if st.button("🔄 更換金鑰"):
             st.session_state.api_key=""; st.rerun()
-        api_key = st.session_state.api_key
+        api_key = "".join(c for c in str(st.session_state.api_key) if ord(c) < 128).strip() if st.session_state.api_key else ""
     else:
         api_key_in = st.text_input("🔑 Gemini API 金鑰",type="password",placeholder="AIza...",
             help="至 aistudio.google.com 免費取得。登入後加密儲存，下次自動帶入。",
             value=st.session_state.api_key)
         if api_key_in and api_key_in!=st.session_state.api_key:
-            st.session_state.api_key=api_key_in
+            st.session_state.api_key="".join(c for c in str(api_key_in) if ord(c) < 128).strip()
             if st.session_state.logged_in and HAS_DB:
                 db_save_enc_key(st.session_state.username,st.session_state._pin,api_key_in)
                 st.success("🔒 已加密儲存")
-        api_key = st.session_state.api_key
+        api_key = "".join(c for c in str(st.session_state.api_key) if ord(c) < 128).strip() if st.session_state.api_key else ""
 
     st.divider()
     st.header("📊 分析設定")
@@ -1330,16 +1349,18 @@ with TABS[0]:
         st.write(""); st.write("")
         go_btn = st.button("🔍 開始分析",use_container_width=True,type="primary")
 
-    # 💡 狀態記憶修復
+    # 💡 狀態記憶修復: 避免輸入框重新整理導致畫面消失
     if "current_sym" not in st.session_state:
         st.session_state.current_sym = ""
 
+    # 當按下開始分析，或從快速選股點擊時，更新當前股票
     if go_btn and ticker_in.strip():
         st.session_state.current_sym = ticker_in.strip()
     elif st.session_state.auto_analyze and st.session_state.quick_sym:
         st.session_state.current_sym = st.session_state.quick_sym
         st.session_state.auto_analyze = False
 
+    # 只要 current_sym 有值，就保持分析畫面
     if st.session_state.current_sym:
         use_sym = st.session_state.current_sym
         if not api_key: st.warning("⚠️ 請先輸入 Gemini API 金鑰"); st.stop()
