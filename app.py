@@ -1,5 +1,5 @@
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║  股市小白分析系統 Pro  V5.3  ─  極簡白話文 × NaN防護 × 記憶防暴衝   ║
+# ║  股市小白分析系統 Pro  V5.4  ─  台灣時區精準對時 × 短緩存防延遲 ║
 # ║  Taiwan Color: RED=漲  GREEN=跌  |  當沖/短線/長線 三維度決策整合   ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 import streamlit as st
@@ -12,7 +12,7 @@ from plotly.subplots import make_subplots
 from google import genai
 from google.genai import types as genai_types
 import time, hashlib, base64, json
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
@@ -23,6 +23,9 @@ try:
     cookie_controller = CookieController()
 except ImportError:
     cookie_controller = None
+
+# 全域設定台灣時區 (UTC+8)
+TW_TZ = timezone(timedelta(hours=8))
 
 # ══════════════════════════════════════════════
 # 1. 頁面設定與 CSS
@@ -262,9 +265,9 @@ def fmt_large(v):
     return f"{v:,.2f}"
 
 # ══════════════════════════════════════════════
-# 5. 數據抓取模組 (NaN 終極防護)
+# 5. 數據抓取模組 (加入台灣時間戳記與縮短快取)
 # ══════════════════════════════════════════════
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False) # 💡 縮短快取為 60 秒，確保資訊夠新
 def fetch_data(symbol: str, period: str):
     try:
         h = yf.download(symbol, period=period, progress=False)
@@ -295,11 +298,15 @@ def fetch_data(symbol: str, period: str):
                 info['dividendYield'] = 'N/A'
         except: 
             info = {'longName': symbol, 'sector': '其他'}
+            
+        # 💡 寫入確切的抓取台灣時間
+        info['fetch_time'] = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        
         return h, info, None
     except Exception as e: 
         return None, None, f"抓取失敗: {str(e)[:50]}"
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def fetch_market_overview():
     syms = {"台灣加權":"^TWII","S&P 500":"^GSPC","那斯達克":"^IXIC","VIX恐慌":"^VIX","費城半導":"^SOX","美元指數":"DX-Y.NYB"}
     tickers = list(syms.values())
@@ -311,7 +318,6 @@ def fetch_market_overview():
                 df = data[sym] if len(tickers)>1 else data
                 if isinstance(df.columns, pd.MultiIndex): 
                     df.columns = [c[0] for c in df.columns]
-                # 強制剔除 NaN 並抓取最後兩筆有效收盤價
                 if "Close" in df.columns:
                     df_clean = df["Close"].dropna()
                     if len(df_clean) >= 2:
@@ -684,7 +690,6 @@ def run_dca(symbol: str, monthly_amount: float, years: int, market: str):
     
     if bm_hist is not None and not bm_hist.empty:
         try:
-            # 確保提取出無 NaN 的收盤價以計算基準報酬
             bm_clean = bm_hist["Close"].dropna()
             if len(bm_clean) > 0:
                 bm_start = float(bm_clean.iloc[0])
@@ -751,7 +756,7 @@ def call_ai(api_key: str, prompt: str, use_search: bool = False) -> str:
             else: 
                 resp = client.models.generate_content(model=mid,contents=prompt)
             tag = "+Search" if use_search else ""
-            ts  = datetime.now().strftime("%Y-%m-%d %H:%M")
+            ts  = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S")
             return f"> [AI] {mname}{tag} | {ts}\n\n{resp.text}"
         except Exception as e:
             err=str(e)
@@ -785,7 +790,6 @@ BB_Position={ind['bb_pct']:.0f}% | Vol_Desc={ind.get('vol_desc', 'N/A')} | 52W_P
 Support={entry['sup1']}/{entry['sup2']} | Resistance={entry['res1']}/{entry['res2']}
 Current Macro Regime: {macro_regime}"""
 
-    # 💡 強制要求極簡、抓重點、不廢話
     bull_prompt = f"""You are a Permabull Analyst. Construct the strongest bullish argument for this stock.
 {base_data}
 [TONE REQUIREMENT]: MUST write for a beginner (股市小白). Use simple everyday analogies. AVOID jargon.
@@ -825,11 +829,13 @@ Current Macro Regime: {macro_regime}"""
 - ⚡ **當沖**: (Buy/Sell/Wait + 1 reason)
 - 📈 **波段**: (Buy/Sell/Wait + 1 reason)
 - 💎 **存股**: (Yes/No + 1 reason)
+## 🎯 新手防守線 (關鍵點位)
+- 萬一跌破 **{entry['sup1']}**，記得快跑 (停損點)
+- 如果衝破 **{entry['res1']}**，可以考慮加碼 (突破點)
 ## 💡 給新手的一句真心話
 - (1 punchy, brutal advice regarding this stock)
 """
 
-    # 序列執行確保不觸發 429
     bull_rpt = call_ai(api_key, bull_prompt, use_search=True)
     time.sleep(1.5)
     bear_rpt = call_ai(api_key, bear_prompt, use_search=True)
@@ -965,12 +971,8 @@ def build_heatmap_chart(df: pd.DataFrame, market: str):
 
 def build_portfolio_sunburst(portfolio: dict, sector_map: dict) -> go.Figure:
     rows = []
-    for sym,data in portfolio.items():
-        if isinstance(data, list):
-             for entry in data:
-                 rows.append({"板塊":sector_map.get(sym,"其他"),"代號":sym,"市值":entry["cost"]*entry["shares"]})
-        else:
-             rows.append({"板塊":sector_map.get(sym,"其他"),"代號":sym,"市值":data["cost"]*data["shares"]})
+    for sym,data in portfolio.items(): 
+        rows.append({"板塊":sector_map.get(sym,"其他"),"代號":sym,"市值":data["cost"]*data["shares"]})
     if not rows: 
         return None
     df = pd.DataFrame(rows)
@@ -1119,7 +1121,7 @@ with st.sidebar:
         current_regime = MACRO_REGIMES[0]
         st.session_state.macro_regime = current_regime
 
-    # 💡 修正: 只在系統剛開啟、沒測試過的情況下背景測試 1 次
+    # 💡 記憶開關防呆: 確保啟動時只偵測一次，不再死迴圈
     if api_key and current_regime == MACRO_REGIMES[0] and not st.session_state.macro_auto_tried:
         st.session_state.macro_auto_tried = True
         with st.spinner("🌍 系統初始化：背景自動偵測全球宏觀制度中..."):
@@ -1252,10 +1254,12 @@ with TABS[0]:
         entry = calc_entry(ind, hist)
         score = calc_score(ind, info)
         co    = info.get("longName") or info.get("shortName") or sym
+        fetch_ts = info.get('fetch_time', '未知')
 
         hc,sc_col=st.columns([5,1])
         with hc: 
             st.subheader(f"📌 {co}({sym})")
+            st.caption(f"⏱️ **資料最後抓取時間 (台灣): {fetch_ts}** | ⚠️ Yahoo Finance 盤中可能有15~20分鐘延遲")
         with sc_col:
             if sym not in st.session_state.watchlist:
                 if st.button("⭐ 追蹤",use_container_width=True):
