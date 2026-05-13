@@ -1,5 +1,5 @@
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║  股市小白分析系統 Pro  V5.4  ─  台灣時區精準對時 × 短緩存防延遲 ║
+# ║  股市小白分析系統 Pro  V5.5  ─  極簡白話文 × NaN防護 × 記憶防暴衝   ║
 # ║  Taiwan Color: RED=漲  GREEN=跌  |  當沖/短線/長線 三維度決策整合   ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 import streamlit as st
@@ -265,9 +265,9 @@ def fmt_large(v):
     return f"{v:,.2f}"
 
 # ══════════════════════════════════════════════
-# 5. 數據抓取模組 (加入台灣時間戳記與縮短快取)
+# 5. 數據抓取模組
 # ══════════════════════════════════════════════
-@st.cache_data(ttl=60, show_spinner=False) # 💡 縮短快取為 60 秒，確保資訊夠新
+@st.cache_data(ttl=60, show_spinner=False)
 def fetch_data(symbol: str, period: str):
     try:
         h = yf.download(symbol, period=period, progress=False)
@@ -299,7 +299,6 @@ def fetch_data(symbol: str, period: str):
         except: 
             info = {'longName': symbol, 'sector': '其他'}
             
-        # 💡 寫入確切的抓取台灣時間
         info['fetch_time'] = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S")
         
         return h, info, None
@@ -836,6 +835,7 @@ Current Macro Regime: {macro_regime}"""
 - (1 punchy, brutal advice regarding this stock)
 """
 
+    # 序列執行確保不觸發 429
     bull_rpt = call_ai(api_key, bull_prompt, use_search=True)
     time.sleep(1.5)
     bear_rpt = call_ai(api_key, bear_prompt, use_search=True)
@@ -972,7 +972,11 @@ def build_heatmap_chart(df: pd.DataFrame, market: str):
 def build_portfolio_sunburst(portfolio: dict, sector_map: dict) -> go.Figure:
     rows = []
     for sym,data in portfolio.items(): 
-        rows.append({"板塊":sector_map.get(sym,"其他"),"代號":sym,"市值":data["cost"]*data["shares"]})
+        if isinstance(data, list):
+             for entry in data:
+                 rows.append({"板塊":sector_map.get(sym,"其他"),"代號":sym,"市值":entry["cost"]*entry["shares"]})
+        else:
+             rows.append({"板塊":sector_map.get(sym,"其他"),"代號":sym,"市值":data["cost"]*data["shares"]})
     if not rows: 
         return None
     df = pd.DataFrame(rows)
@@ -1116,25 +1120,34 @@ with st.sidebar:
     st.divider()
     st.header("🌍 宏觀制度設定")
     
-    # 初始化選單記憶體
-    if "macro_sel" not in st.session_state:
-        st.session_state.macro_sel = MACRO_REGIMES[0]
+    if "macro_regime" not in st.session_state:
+        st.session_state.macro_regime = MACRO_REGIMES[0]
+        
+    if "macro_auto_tried" not in st.session_state:
+        st.session_state.macro_auto_tried = False
 
-    # 💡 背景自動偵測 (直接寫入選單記憶體)
-    if api_key and st.session_state.macro_sel == MACRO_REGIMES[0] and not st.session_state.macro_auto_tried:
+    # 💡 只在「從未自動偵測過」且「狀態是未知」時才自動呼叫一次
+    if api_key and st.session_state.macro_regime == MACRO_REGIMES[0] and not st.session_state.macro_auto_tried:
         st.session_state.macro_auto_tried = True
         with st.spinner("🌍 系統初始化：背景自動偵測全球宏觀制度中..."):
             try:
                 regime_rpt = ai_macro_regime(api_key)
                 for r in MACRO_REGIMES[1:]:
                     if r in regime_rpt: 
-                        st.session_state.macro_sel = r
+                        st.session_state.macro_regime = r
                         break
             except: 
                 pass
 
-    # 下拉選單 (它會自動讀取並同步 st.session_state.macro_sel)
-    macro_regime = st.selectbox("當前宏觀制度", MACRO_REGIMES, key="macro_sel")
+    current_index = 0
+    if st.session_state.macro_regime in MACRO_REGIMES:
+        current_index = MACRO_REGIMES.index(st.session_state.macro_regime)
+
+    selected_regime = st.selectbox("當前宏觀制度", MACRO_REGIMES, index=current_index)
+    
+    if selected_regime != st.session_state.macro_regime:
+        st.session_state.macro_regime = selected_regime
+        st.rerun()
     
     if api_key and st.button("🔄 手動重新偵測", use_container_width=True):
         with st.spinner("重新搜尋與評估中..."):
@@ -1143,14 +1156,14 @@ with st.sidebar:
                 detected = False
                 for r in MACRO_REGIMES[1:]:
                     if r in regime_rpt: 
-                        st.session_state.macro_sel = r
+                        st.session_state.macro_regime = r
                         detected = True
                         break
                 
                 if detected:
-                    st.success(f"✅ 偵測完成: {st.session_state.macro_sel}")
-                    time.sleep(1) # 讓成功訊息顯示 1 秒
-                    st.rerun()    # 強制刷新畫面，徹底鎖定記憶體
+                    st.success(f"✅ 偵測完成: {st.session_state.macro_regime}")
+                    time.sleep(1)
+                    st.rerun() 
                 else:
                     st.warning("⚠️ 偵測失敗，請稍後重試")
             except Exception as e: 
@@ -1185,7 +1198,7 @@ with st.sidebar:
 # ══════════════════════════════════════════════
 # 12. 主頁面 (戰情室)
 # ══════════════════════════════════════════════
-st.title("📈 股市小白分析系統 Pro V5.3")
+st.title("📈 股市小白分析系統 Pro V5.5")
 st.caption("防封鎖序列AI × 絕對新手白話文版 × 資金控管模組 × 🔴紅漲🟢跌")
 
 mkt = fetch_market_overview()
@@ -1205,8 +1218,8 @@ if st.session_state.recent_searches:
             st.rerun()
 
 regime_colors={"成長擴張(Risk-On)":"#cc2222","復甦反彈(Early Cycle)":"#aa3333","通膨衰退(Stagflation)":"#446644","衰退(Risk-Off)":"#228844","流動性危機":"#4422aa","未知":"#444444"}
-rc=regime_colors.get(macro_regime,"#444444")
-st.markdown(f'<div style="background:{rc};border-radius:8px;padding:8px 16px;margin:6px 0;text-align:center"><span style="color:white;font-weight:bold">🌍 當前宏觀大環境: {macro_regime}</span></div>',unsafe_allow_html=True)
+rc=regime_colors.get(st.session_state.macro_regime,"#444444")
+st.markdown(f'<div style="background:{rc};border-radius:8px;padding:8px 16px;margin:6px 0;text-align:center"><span style="color:white;font-weight:bold">🌍 當前宏觀大環境: {st.session_state.macro_regime}</span></div>',unsafe_allow_html=True)
 st.divider()
 
 TABS = st.tabs(["📊 個股戰情室","💼 我的資產庫","📊 選股+回測","🗺️ 市場總覽","🧠 交易心理診斷"])
@@ -1372,7 +1385,7 @@ with TABS[0]:
         elif st.button("⚔️ 啟動三方辯論 (約需 60~90 秒，依序執行防封鎖)",type="primary"):
             with st.spinner("AI 代理人撰寫白話文報告中 (為避免被 Google 封鎖，我們一位一位來)..."):
                 try:
-                    bull_rpt,bear_rpt,judge_rpt = ai_three_agent_debate(ind,info,sym,api_key,entry,score,macro_regime)
+                    bull_rpt,bear_rpt,judge_rpt = ai_three_agent_debate(ind,info,sym,api_key,entry,score,st.session_state.macro_regime)
                     debate_tab1,debate_tab2,debate_tab3 = st.tabs(["🔴 多頭看漲原因","🟢 空頭看跌原因","🟣 裁判最終判定"])
                     
                     with debate_tab1:
@@ -1770,4 +1783,4 @@ with TABS[4]:
                         st.error(str(e)[:80])
 
 st.divider()
-st.caption("📈 股市小白分析系統 Pro V5.3 | 🔴紅漲🟢跌 | ⚠️ 內容僅供學習參考，不構成投資建議")
+st.caption("📈 股市小白分析系統 Pro V5.5 | 🔴紅漲🟢跌 | ⚠️ 內容僅供學習參考，不構成投資建議")
