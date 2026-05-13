@@ -1,5 +1,5 @@
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║  股市小白分析系統 Pro  V5.2  ─  防 429 封鎖 × 全面極度新手白話文版  ║
+# ║  股市小白分析系統 Pro  V5.3  ─  極簡白話文 × NaN防護 × 記憶防暴衝   ║
 # ║  Taiwan Color: RED=漲  GREEN=跌  |  當沖/短線/長線 三維度決策整合   ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 import streamlit as st
@@ -13,6 +13,7 @@ from google import genai
 from google.genai import types as genai_types
 import time, hashlib, base64, json
 from datetime import datetime, date, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -63,7 +64,7 @@ _DEFS = dict(
     watchlist=[], alerts={}, portfolio={}, trade_history=[], 
     recent_searches=[], quick_sym="", auto_analyze=False,
     confirm_clear_watch=False, confirm_clear_port=False, confirm_clear_trades=False,
-    macro_regime="未知",
+    macro_regime="未知", macro_auto_tried=False,
 )
 for k, v in _DEFS.items():
     if k not in st.session_state: 
@@ -261,7 +262,7 @@ def fmt_large(v):
     return f"{v:,.2f}"
 
 # ══════════════════════════════════════════════
-# 5. 數據抓取模組
+# 5. 數據抓取模組 (NaN 終極防護)
 # ══════════════════════════════════════════════
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_data(symbol: str, period: str):
@@ -304,16 +305,19 @@ def fetch_market_overview():
     tickers = list(syms.values())
     rows = []
     try:
-        data = yf.download(tickers, period="2d", group_by="ticker", progress=False)
+        data = yf.download(tickers, period="5d", group_by="ticker", progress=False)
         for name, sym in syms.items():
             try:
                 df = data[sym] if len(tickers)>1 else data
                 if isinstance(df.columns, pd.MultiIndex): 
                     df.columns = [c[0] for c in df.columns]
-                if not df.empty and len(df)>=2:
-                    c1 = float(df["Close"].iloc[-2])
-                    c2 = float(df["Close"].iloc[-1])
-                    rows.append({"名稱":name, "現值":round(c2, 2), "漲跌%":round((c2 - c1) / max(c1, 0.01) * 100, 2)})
+                # 強制剔除 NaN 並抓取最後兩筆有效收盤價
+                if "Close" in df.columns:
+                    df_clean = df["Close"].dropna()
+                    if len(df_clean) >= 2:
+                        c1 = float(df_clean.iloc[-2])
+                        c2 = float(df_clean.iloc[-1])
+                        rows.append({"名稱":name, "現值":round(c2, 2), "漲跌%":round((c2 - c1) / max(c1, 0.01) * 100, 2)})
             except: 
                 continue
     except: 
@@ -334,11 +338,15 @@ def fetch_batch_quotes(symbols: tuple) -> dict:
                 df = data[sym] if len(symbols)>1 else data
                 if isinstance(df.columns, pd.MultiIndex): 
                     df.columns = [c[0] for c in df.columns]
-                if not df.empty and len(df)>=2:
-                    c1 = float(df["Close"].iloc[-2])
-                    c2 = float(df["Close"].iloc[-1])
-                    results[sym] = (round(c2, 2), round((c2 - c1) / max(c1, 0.01) * 100, 2))
-                else: 
+                if "Close" in df.columns:
+                    df_clean = df["Close"].dropna()
+                    if len(df_clean) >= 2:
+                        c1 = float(df_clean.iloc[-2])
+                        c2 = float(df_clean.iloc[-1])
+                        results[sym] = (round(c2, 2), round((c2 - c1) / max(c1, 0.01) * 100, 2))
+                    else: 
+                        results[sym] = (None, None)
+                else:
                     results[sym] = (None, None)
             except: 
                 results[sym] = (None, None)
@@ -360,18 +368,20 @@ def fetch_heatmap_data(market: str) -> pd.DataFrame:
     if not tickers: 
         return pd.DataFrame()
     try:
-        data = yf.download(tickers, period="2d", group_by="ticker", progress=False)
+        data = yf.download(tickers, period="5d", group_by="ticker", progress=False)
         for full in tickers:
             try:
                 df = data[full] if len(tickers)>1 else data
                 if isinstance(df.columns, pd.MultiIndex): 
                     df.columns = [c[0] for c in df.columns]
-                if not df.empty and len(df)>=2:
-                    c1 = float(df["Close"].iloc[-2])
-                    c2 = float(df["Close"].iloc[-1])
-                    if c1 > 0:
-                        sector, name = sym_map[full]
-                        rows.append({"板塊": sector, "名稱": name, "代號": full.replace(".TW",""), "漲跌%": round((c2 - c1) / c1 * 100, 2), "市值": 1e9})
+                if "Close" in df.columns:
+                    df_clean = df["Close"].dropna()
+                    if len(df_clean) >= 2:
+                        c1 = float(df_clean.iloc[-2])
+                        c2 = float(df_clean.iloc[-1])
+                        if c1 > 0:
+                            sector, name = sym_map[full]
+                            rows.append({"板塊": sector, "名稱": name, "代號": full.replace(".TW",""), "漲跌%": round((c2 - c1) / c1 * 100, 2), "市值": 1e9})
             except: 
                 continue
     except: 
@@ -622,7 +632,6 @@ def run_screener(symbols: list, conditions: dict) -> list:
             pass
         return None
         
-    # 限制並發數避免 API 被鎖
     with ThreadPoolExecutor(max_workers=3) as ex:
         futs = [ex.submit(_check,s) for s in symbols]
         for f in as_completed(futs):
@@ -675,10 +684,13 @@ def run_dca(symbol: str, monthly_amount: float, years: int, market: str):
     
     if bm_hist is not None and not bm_hist.empty:
         try:
-            bm_start = float(bm_hist["Close"].iloc[0])
-            bm_end = float(bm_hist["Close"].iloc[-1])
-            bm_rtn = ((bm_end - bm_start) / bm_start) * 100
-            bm_rtn_str = f"{bm_rtn:+.2f}%"
+            # 確保提取出無 NaN 的收盤價以計算基準報酬
+            bm_clean = bm_hist["Close"].dropna()
+            if len(bm_clean) > 0:
+                bm_start = float(bm_clean.iloc[0])
+                bm_end = float(bm_clean.iloc[-1])
+                bm_rtn = ((bm_end - bm_start) / bm_start) * 100
+                bm_rtn_str = f"{bm_rtn:+.2f}%"
             
             daily_returns = hist["Close"].pct_change().dropna()
             ann_vol = daily_returns.std() * np.sqrt(252) * 100
@@ -725,7 +737,7 @@ def analyze_behavioral_bias(trades: list) -> dict:
     }
 
 # ══════════════════════════════════════════════
-# 9. AI 生成模組 (強制新手白話文版)
+# 9. AI 生成模組 (強制極簡新手白話文版)
 # ══════════════════════════════════════════════
 def call_ai(api_key: str, prompt: str, use_search: bool = False) -> str:
     client = genai.Client(api_key=api_key)
@@ -756,7 +768,7 @@ Choose EXACTLY ONE from the following list and output that exact string: [未知
 You MUST format your output exactly as shown below:
 
 **制度: ** [Exact string from the list above]
-**理由: ** [Under 50 words explaining FED policy, GDP, or inflation data in Traditional Chinese.]"""
+**理由: ** [Under 30 words explaining FED policy or inflation in Traditional Chinese.]"""
     return call_ai(api_key, prompt, use_search=True)
 
 def ai_three_agent_debate(ind, info, sym, api_key, entry, score, macro_regime) -> tuple:
@@ -771,64 +783,53 @@ RSI={ind['rsi']} StochK={ind['stoch_k']} Williams%R={ind['williams_r']}
 MACD_H={ind['macd_hist']} ATR={atr} OBV={'Up' if ind['obv']>0 else 'Down'}
 BB_Position={ind['bb_pct']:.0f}% | Vol_Desc={ind.get('vol_desc', 'N/A')} | 52W_Position={ind['position_52w']}%
 Support={entry['sup1']}/{entry['sup2']} | Resistance={entry['res1']}/{entry['res2']}
-PE={info.get('trailingPE','N/A')} | PB={info.get('priceToBook','N/A')} | Beta={info.get('beta','N/A')}
 Current Macro Regime: {macro_regime}"""
 
-    # 💡 核心優化: 強制 AI 寫給完全不懂股票的「小白」看
-    bull_prompt = f"""You are a Permabull Analyst. Construct the strongest possible bullish argument for this stock.
+    # 💡 強制要求極簡、抓重點、不廢話
+    bull_prompt = f"""You are a Permabull Analyst. Construct the strongest bullish argument for this stock.
 {base_data}
-[TONE REQUIREMENT]: You MUST write for a complete beginner in the stock market (股市小白). Use simple everyday analogies. AVOID complex financial jargon. Explain concepts in extremely plain, easy-to-understand Traditional Chinese (zh-TW).
+[TONE REQUIREMENT]: MUST write for a beginner (股市小白). Use simple everyday analogies. AVOID jargon.
+[FORMAT REQUIREMENT]: BE EXTREMELY CONCISE. Use short bullet points. NO fluff. NO introductory or concluding pleasantries. Get straight to the point. Output in Traditional Chinese (zh-TW).
 
-[OUTPUT FORMAT (Strictly use these exact markdown headers)]
-## 🔴 為什麼看漲？ (核心利多)
-- (List 3 latest positive news using simple words)
-## 📈 圖表上的好消息 (技術面)
-- (Explain 3 technical signals simply, like "RSI is low, meaning the stock is on sale")
-## ⏱️ 不同玩家的建議 (多週期展望)
-- ⚡ **當沖(今天買賣)**: (Plain advice for day traders)
-- 📈 **波段(抱幾週)**: (Plain advice for swing traders)
-- 💎 **存股(抱很久)**: (Plain advice for long term holders)
-## 🌍 大環境的順風車 (宏觀影響)
-- (Explain why the {macro_regime} environment is good for this stock using a simple analogy)
+## 🔴 為什麼看漲？ (利多)
+- (1 short bullet point: Latest positive news)
+- (1 short bullet point: Strongest technical signal)
+## ⏱️ 給你的建議
+- ⚡ **當沖**: (Short advice)
+- 📈 **波段**: (Short advice)
+- 💎 **存股**: (Short advice)
 """
 
     bear_prompt = f"""You are a Ruthless Bear Analyst. Expose all bearish risks for this stock.
 {base_data}
-[TONE REQUIREMENT]: You MUST write for a complete beginner in the stock market (股市小白). Use simple everyday analogies. AVOID complex financial jargon. Explain concepts in extremely plain, easy-to-understand Traditional Chinese (zh-TW).
+[TONE REQUIREMENT]: MUST write for a beginner (股市小白). Use simple everyday analogies. AVOID jargon.
+[FORMAT REQUIREMENT]: BE EXTREMELY CONCISE. Use short bullet points. NO fluff. NO introductory or concluding pleasantries. Get straight to the point. Output in Traditional Chinese (zh-TW).
 
-[OUTPUT FORMAT (Strictly use these exact markdown headers)]
-## 🟢 為什麼看跌？ (核心風險)
-- (List 3 latest negative news using simple words)
-## 📉 圖表上的壞消息 (技術面)
-- (Explain 3 bearish technical signals simply, like "The price broke below the moving average support")
-## ⏱️ 不同玩家的風險 (多週期風險)
-- ⚡ **當沖(今天買賣)**: (Plain risk warning for day traders)
-- 📉 **波段(抱幾週)**: (Plain risk warning for swing traders)
-- 🏚️ **存股(抱很久)**: (Plain risk warning for long term holders)
-## 🦢 最怕發生的黑天鵝 (潛在未爆彈)
-- (One highly specific risk that a beginner should watch out for)
+## 🟢 為什麼看跌？ (風險)
+- (1 short bullet point: Latest negative news/risk)
+- (1 short bullet point: Weakest technical signal)
+## ⏱️ 給你的警告
+- ⚡ **當沖**: (Short warning)
+- 📉 **波段**: (Short warning)
+- 🏚️ **存股**: (Short warning)
 """
 
-    judge_prompt = f"""You are a rational Chief Investment Officer (CIO). Adjudicate the bullish and bearish arguments objectively.
+    judge_prompt = f"""You are a CIO. Adjudicate the bullish and bearish arguments objectively.
 {base_data}
-[TONE REQUIREMENT]: You MUST write for a complete beginner in the stock market (股市小白). Use simple everyday analogies. AVOID complex financial jargon. Explain concepts in extremely plain, easy-to-understand Traditional Chinese (zh-TW).
+[TONE REQUIREMENT]: MUST write for a beginner (股市小白). Use simple everyday analogies. AVOID jargon.
+[FORMAT REQUIREMENT]: BE EXTREMELY CONCISE. Use short bullet points. NO fluff. NO introductory or concluding pleasantries. Get straight to the point. Output in Traditional Chinese (zh-TW).
 
-[OUTPUT FORMAT (Strictly use these exact markdown headers)]
-## 🟣 裁判最終判定 (CIO 結論)
-- **多空大對決**: (Give a simple score or winner between bull and bear)
-## ⏱️ 給你的操作建議 (分級計畫)
-- ⚡ **當沖(今天買賣)**: (Clear action: Buy/Sell/Wait + simple reason)
-- 📈 **波段(抱幾週)**: (Clear action: Buy/Sell/Wait + simple reason)
-- 💎 **存股(抱很久)**: (Clear action: Yes/No + simple reason)
-## 🎯 新手防守線 (關鍵點位)
-- 萬一跌破 **{entry['sup1']}**，記得快跑 (停損點)
-- 如果衝破 **{entry['res1']}**，可以考慮加碼 (突破點)
+## 🟣 裁判最終判定
+- **多空大對決**: (Who wins? Bull or Bear? 1 sentence)
+## ⏱️ 最終操作建議
+- ⚡ **當沖**: (Buy/Sell/Wait + 1 reason)
+- 📈 **波段**: (Buy/Sell/Wait + 1 reason)
+- 💎 **存股**: (Yes/No + 1 reason)
 ## 💡 給新手的一句真心話
-- (A single punchy, fatherly advice regarding this stock)
+- (1 punchy, brutal advice regarding this stock)
 """
 
-    # 💡 核心防護: 改回依序執行 (Sequential Execution) 以防止 Google API 429 封鎖
-    # 加入小段暫停(Sleep)確保請求不會疊加
+    # 序列執行確保不觸發 429
     bull_rpt = call_ai(api_key, bull_prompt, use_search=True)
     time.sleep(1.5)
     bear_rpt = call_ai(api_key, bear_prompt, use_search=True)
@@ -843,52 +844,50 @@ def ai_portfolio_cio(portfolio_data: str, sector_data: str, api_key: str) -> str
 {portfolio_data}
 Sector Allocation: {sector_data}
 
-[TONE REQUIREMENT]: MUST write for a beginner. Use plain, everyday Traditional Chinese (zh-TW). Avoid jargon. Explain WHY they should keep or sell in simple terms.
+[TONE REQUIREMENT]: MUST write for a beginner. Avoid jargon.
+[FORMAT REQUIREMENT]: BE EXTREMELY CONCISE. Use short bullet points. NO fluff. Output in Traditional Chinese (zh-TW).
 
-[OUTPUT FORMAT]
 ## 🏦 你的持股健康檢查
-- (Assess sector concentration simply, e.g., "You have too many tech stocks, it's like putting all your eggs in one basket.")
-## ⚔️ 汰弱留強大掃除 (每檔股票建議)
-(For EACH stock, give advice for short and long term):
-- **[Stock Symbol]**:
-  - 短線(波段): (留/砍/減碼 + 白話理由)
-  - 長線(存股): (留/砍/換股 + 白話理由)
-## 🔄 這樣做會更好 (優化建議)
-- 最該賣掉的 1 支股票
-- 表現最好可以加碼的股票
+- (1 sentence assessing risk)
+## ⚔️ 汰弱留強大掃除
+(For EACH stock):
+- **[Symbol]**: 短線(留/砍), 長線(留/砍) - (Brief reason)
+## 🔄 這樣做會更好
+- (1 worst stock to sell)
+- (1 best stock to keep/add)
 """
     return call_ai(api_key, prompt, use_search=True)
 
 def ai_entry_critique(sym, co, buy_price, buy_date, ind_at_buy, current_price, api_key) -> str:
-    prompt = f"""You are a Trading Coach conducting a post-mortem analysis of a trade.
+    prompt = f"""You are a Trading Coach. Post-mortem analysis:
 Trade: {co} ({sym}) bought at {buy_price} on {buy_date}. Current price: {current_price}. Indicators at buy: {ind_at_buy}.
 
-[TONE REQUIREMENT]: MUST write for a beginner. Use plain, everyday Traditional Chinese (zh-TW). Avoid jargon.
+[TONE REQUIREMENT]: MUST write for a beginner. Avoid jargon.
+[FORMAT REQUIREMENT]: BE EXTREMELY CONCISE. Use short bullet points. NO fluff. Output in Traditional Chinese (zh-TW).
 
-[OUTPUT FORMAT]
-## 🔬 買點健檢 (幫你抓蟲)
-- (Explain simply if they bought at a good time or chased a high price)
+## 🔬 買點健檢
+- (Was it a good entry? 1 sentence)
 ## 🎯 現在該怎麼辦？
-- **短線玩家**: (繼續抱 / 設停損 / 快跑) + 白話理由
-- **長線存股**: (加碼 / 續抱 / 換股) + 白話理由
-## 🧠 小心被心理學騙了
-- (Point out common beginner mistakes like FOMO or holding losers too long in simple terms)
+- **短線**: (Hold/Sell/Stop)
+- **長線**: (Add/Hold/Sell)
+## 🧠 心理防線
+- (1 common behavioral mistake they might be making right now)
 """
     return call_ai(api_key, prompt, use_search=False)
 
 def ai_bias_warning(bias_data: dict, trades_summary: str, api_key: str) -> str:
     disposition = bias_data.get("disposition_effect", False)
-    prompt = f"""You are a Behavioral Finance Expert. Diagnose trading biases.
+    prompt = f"""You are a Behavioral Finance Expert. Diagnose biases.
 Win rate: {bias_data.get('win_rate',0)}%, Disposition effect: {'Yes' if disposition else 'No'}. Recent trades: {trades_summary}.
 
-[TONE REQUIREMENT]: MUST write for a beginner. Use plain, everyday Traditional Chinese (zh-TW). Avoid jargon.
+[TONE REQUIREMENT]: MUST write for a beginner. Avoid jargon.
+[FORMAT REQUIREMENT]: BE EXTREMELY CONCISE. Use short bullet points. NO fluff. Output in Traditional Chinese (zh-TW).
 
-[OUTPUT FORMAT]
-## 🧠 你的投資壞習慣診斷
-- (Explain top 3 mistakes using everyday analogies. If disposition effect is true, explain why holding losers is bad.)
+## 🧠 投資壞習慣診斷
+- (Top 2 mistakes observed)
 ## 💊 幫你開處方籤
-- **給愛做短線的你**: (Simple rules like "Cut losses at 5%")
-- **給想存長線的你**: (Mindset tips for patience)
+- **短線藥方**: (1 strict rule)
+- **長線藥方**: (1 mindset fix)
 """
     return call_ai(api_key, prompt, use_search=False)
 
@@ -966,8 +965,12 @@ def build_heatmap_chart(df: pd.DataFrame, market: str):
 
 def build_portfolio_sunburst(portfolio: dict, sector_map: dict) -> go.Figure:
     rows = []
-    for sym,data in portfolio.items(): 
-        rows.append({"板塊":sector_map.get(sym,"其他"),"代號":sym,"市值":data["cost"]*data["shares"]})
+    for sym,data in portfolio.items():
+        if isinstance(data, list):
+             for entry in data:
+                 rows.append({"板塊":sector_map.get(sym,"其他"),"代號":sym,"市值":entry["cost"]*entry["shares"]})
+        else:
+             rows.append({"板塊":sector_map.get(sym,"其他"),"代號":sym,"市值":data["cost"]*data["shares"]})
     if not rows: 
         return None
     df = pd.DataFrame(rows)
@@ -1116,7 +1119,9 @@ with st.sidebar:
         current_regime = MACRO_REGIMES[0]
         st.session_state.macro_regime = current_regime
 
-    if api_key and current_regime == MACRO_REGIMES[0]:
+    # 💡 修正: 只在系統剛開啟、沒測試過的情況下背景測試 1 次
+    if api_key and current_regime == MACRO_REGIMES[0] and not st.session_state.macro_auto_tried:
+        st.session_state.macro_auto_tried = True
         with st.spinner("🌍 系統初始化：背景自動偵測全球宏觀制度中..."):
             try:
                 regime_rpt = ai_macro_regime(api_key)
@@ -1175,7 +1180,7 @@ with st.sidebar:
 # ══════════════════════════════════════════════
 # 12. 主頁面 (戰情室)
 # ══════════════════════════════════════════════
-st.title("📈 股市小白分析系統 Pro V5.2")
+st.title("📈 股市小白分析系統 Pro V5.3")
 st.caption("防封鎖序列AI × 絕對新手白話文版 × 資金控管模組 × 🔴紅漲🟢跌")
 
 mkt = fetch_market_overview()
@@ -1514,20 +1519,22 @@ with TABS[1]:
                 total_c = sum(e.get("cost", 0) * e.get("shares", 0) for e in entries)
                 avg_c = round(total_c / total_s, 2) if total_s > 0 else 0
                 try:
-                    hh2 = yf.Ticker(sym).history(period="2d")
-                    if not hh2.empty:
-                        cp2 = round(float(hh2["Close"].iloc[-1]), 2)
-                        pnl_pct = round((cp2 - avg_c) / max(avg_c, 0.01) * 100, 2)
-                        v2 = round(cp2 * total_s, 0)
-                        c2 = round(total_c, 0)
-                        try: 
-                            sec = yf.Ticker(sym).info.get("sector", "其他") or "其他"
-                        except: 
-                            sec = "其他"
-                        sector_map[sym] = sec
-                        pr_rows.append({"代號": sym, "均價": avg_c, "現價": cp2, "損益%": f"{pnl_pct:+.2f}%", "總損益": f"{v2-c2:+,.0f}", "總股數": total_s, "板塊": sec})
-                        tc_all += c2
-                        cv_all += v2
+                    hh2 = yf.Ticker(sym).history(period="5d")
+                    if "Close" in hh2.columns:
+                        hh2_clean = hh2["Close"].dropna()
+                        if not hh2_clean.empty:
+                            cp2 = round(float(hh2_clean.iloc[-1]), 2)
+                            pnl_pct = round((cp2 - avg_c) / max(avg_c, 0.01) * 100, 2)
+                            v2 = round(cp2 * total_s, 0)
+                            c2 = round(total_c, 0)
+                            try: 
+                                sec = yf.Ticker(sym).info.get("sector", "其他") or "其他"
+                            except: 
+                                sec = "其他"
+                            sector_map[sym] = sec
+                            pr_rows.append({"代號": sym, "均價": avg_c, "現價": cp2, "損益%": f"{pnl_pct:+.2f}%", "總損益": f"{v2-c2:+,.0f}", "總股數": total_s, "板塊": sec})
+                            tc_all += c2
+                            cv_all += v2
                 except: 
                     pass
             
@@ -1756,4 +1763,4 @@ with TABS[4]:
                         st.error(str(e)[:80])
 
 st.divider()
-st.caption("📈 股市小白分析系統 Pro V5.2 | 🔴紅漲🟢跌 | ⚠️ 內容僅供學習參考，不構成投資建議")
+st.caption("📈 股市小白分析系統 Pro V5.3 | 🔴紅漲🟢跌 | ⚠️ 內容僅供學習參考，不構成投資建議")
