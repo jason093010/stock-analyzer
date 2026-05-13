@@ -1,5 +1,5 @@
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║  股市小白分析系統 Pro  V4.2  ─  全週期量化 × 頂級英文 Prompt 重構版 ║
+# ║  股市小白分析系統 Pro  V5.0  ─  終極全週期量化 × 資金控管 × 並行 AI   ║
 # ║  Taiwan Color: RED=漲  GREEN=跌  |  當沖/短線/長線 三維度決策整合   ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 import streamlit as st
@@ -27,12 +27,7 @@ except ImportError:
 # ══════════════════════════════════════════════
 # 1. 頁面設定與 CSS
 # ══════════════════════════════════════════════
-st.set_page_config(
-    page_title="股市小白分析系統 Pro V4",
-    page_icon="📈",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="股市小白分析系統 Pro V5", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -62,15 +57,14 @@ try:
     if _url and _key:
         _supabase = create_client(_url, _key)
         HAS_DB = True
-except Exception: 
-    pass
+except Exception: pass
 
 _DEFS = dict(
     user_id=None, username=None, logged_in=False, _pin="", api_key="", 
     watchlist=[], alerts={}, portfolio={}, trade_history=[], 
     recent_searches=[], quick_sym="", auto_analyze=False,
     confirm_clear_watch=False, confirm_clear_port=False, confirm_clear_trades=False,
-    macro_regime="未知",
+    macro_regime="Unknown",
 )
 for k, v in _DEFS.items():
     if k not in st.session_state: 
@@ -79,162 +73,115 @@ for k, v in _DEFS.items():
 # ══════════════════════════════════════════════
 # 3. 加密工具與資料庫函數
 # ══════════════════════════════════════════════
-_SALT = b"tw_stock_pro_v4_salt"
+_SALT = b"tw_stock_pro_v5_salt"
 
 def _derive_key(pin: str) -> bytes:
     kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=_SALT, iterations=390000)
     return base64.urlsafe_b64encode(kdf.derive(pin.encode()))
 
-def encrypt_key(api_key: str, pin: str) -> str: 
-    return Fernet(_derive_key(pin)).encrypt(api_key.encode()).decode()
-
+def encrypt_key(api_key: str, pin: str) -> str: return Fernet(_derive_key(pin)).encrypt(api_key.encode()).decode()
 def decrypt_key(token: str, pin: str) -> str:
-    try: 
-        return Fernet(_derive_key(pin)).decrypt(token.encode()).decode()
-    except: 
-        return ""
+    try: return Fernet(_derive_key(pin)).decrypt(token.encode()).decode()
+    except: return ""
 
-def make_uid(username: str, pin: str) -> str: 
-    return hashlib.sha256(f"{username.lower().strip()}:{pin}".encode()).hexdigest()[:20]
+def make_uid(username: str, pin: str) -> str: return hashlib.sha256(f"{username.lower().strip()}:{pin}".encode()).hexdigest()[:20]
 
 def db_verify_user(username: str, pin: str):
-    if not HAS_DB: 
-        return True, make_uid(username, pin), None
+    if not HAS_DB: return True, make_uid(username, pin), None
     try:
         uid = make_uid(username, pin)
         r = _supabase.table("users").select("id,encrypted_api_key").eq("username", username.lower().strip()).eq("password_hash", uid).execute()
-        if r.data: 
-            return True, uid, r.data[0].get("encrypted_api_key")
+        if r.data: return True, uid, r.data[0].get("encrypted_api_key")
         return False, None, None
-    except: 
-        return False, None, None
+    except: return False, None, None
 
 def db_create_user(username: str, pin: str):
-    if not HAS_DB: 
-        return True, make_uid(username, pin), "本機模式"
+    if not HAS_DB: return True, make_uid(username, pin), "本機模式"
     try:
         uid = make_uid(username, pin)
         ex = _supabase.table("users").select("id").eq("username", username.lower().strip()).execute()
-        if ex.data: 
-            return False, None, "帳號已存在"
+        if ex.data: return False, None, "帳號已存在"
         _supabase.table("users").insert({"username": username.lower().strip(), "password_hash": uid}).execute()
         return True, uid, "帳號建立成功！"
-    except Exception as e: 
-        return False, None, str(e)[:60]
+    except Exception as e: return False, None, str(e)[:60]
 
 def db_save_enc_key(username: str, pin: str, api_key: str):
-    if not HAS_DB or not api_key: 
-        return
+    if not HAS_DB or not api_key: return
     try:
         token = encrypt_key(api_key, pin)
         _supabase.table("users").update({"encrypted_api_key": token}).eq("username", username.lower().strip()).execute()
-    except: 
-        pass
+    except: pass
 
 def db_load_wl(uid): 
-    if not HAS_DB: 
-        return []
-    try: 
-        return [x["symbol"] for x in _supabase.table("watchlists").select("symbol").eq("user_id",uid).execute().data]
-    except: 
-        return []
+    if not HAS_DB: return []
+    try: return [x["symbol"] for x in _supabase.table("watchlists").select("symbol").eq("user_id",uid).execute().data]
+    except: return []
 
 def db_add_wl(uid,sym):
-    if not HAS_DB: 
-        return
+    if not HAS_DB: return
     try:
         if not _supabase.table("watchlists").select("id").eq("user_id",uid).eq("symbol",sym).execute().data:
             _supabase.table("watchlists").insert({"user_id":uid,"symbol":sym}).execute()
-    except: 
-        pass
+    except: pass
 
 def db_del_wl(uid,sym):
-    if not HAS_DB: 
-        return
-    try: 
-        _supabase.table("watchlists").delete().eq("user_id",uid).eq("symbol",sym).execute()
-    except: 
-        pass
+    if not HAS_DB: return
+    try: _supabase.table("watchlists").delete().eq("user_id",uid).eq("symbol",sym).execute()
+    except: pass
 
 def db_load_alerts(uid):
-    if not HAS_DB: 
-        return {}
-    try: 
-        return {x["symbol"]:{"above":x.get("above_price"),"below":x.get("below_price")} for x in _supabase.table("alerts").select("*").eq("user_id",uid).execute().data}
-    except: 
-        return {}
+    if not HAS_DB: return {}
+    try: return {x["symbol"]:{"above":x.get("above_price"),"below":x.get("below_price")} for x in _supabase.table("alerts").select("*").eq("user_id",uid).execute().data}
+    except: return {}
 
 def db_save_alert(uid,sym,above,below):
-    if not HAS_DB: 
-        return
+    if not HAS_DB: return
     try:
         d={"user_id":uid,"symbol":sym,"above_price":above or None,"below_price":below or None}
         ex=_supabase.table("alerts").select("id").eq("user_id",uid).eq("symbol",sym).execute()
-        if ex.data: 
-            _supabase.table("alerts").update(d).eq("user_id",uid).eq("symbol",sym).execute()
-        else: 
-            _supabase.table("alerts").insert(d).execute()
-    except: 
-        pass
+        if ex.data: _supabase.table("alerts").update(d).eq("user_id",uid).eq("symbol",sym).execute()
+        else: _supabase.table("alerts").insert(d).execute()
+    except: pass
 
 def db_del_alert(uid,sym):
-    if not HAS_DB: 
-        return
-    try: 
-        _supabase.table("alerts").delete().eq("user_id",uid).eq("symbol",sym).execute()
-    except: 
-        pass
+    if not HAS_DB: return
+    try: _supabase.table("alerts").delete().eq("user_id",uid).eq("symbol",sym).execute()
+    except: pass
 
 def db_load_port(uid):
-    if not HAS_DB: 
-        return {}
+    if not HAS_DB: return {}
     try:
         data = _supabase.table("portfolio").select("*").eq("user_id", uid).execute().data
         port = {}
         for x in data:
             sym = x["symbol"]
-            if sym not in port: 
-                port[sym] = []
+            if sym not in port: port[sym] = []
             port[sym].append({"db_id": x["id"], "cost": x["cost_price"], "shares": x["shares"], "note": x.get("note",""), "buy_date": x.get("buy_date","")})
         return port
-    except: 
-        return {}
+    except: return {}
 
 def db_save_port(uid, sym, cost, shares, note="", buy_date=""):
-    if not HAS_DB: 
-        return
-    try: 
-        _supabase.table("portfolio").insert({"user_id": uid, "symbol": sym, "cost_price": cost, "shares": shares, "note": note, "buy_date": buy_date}).execute()
-    except: 
-        pass
+    if not HAS_DB: return
+    try: _supabase.table("portfolio").insert({"user_id": uid, "symbol": sym, "cost_price": cost, "shares": shares, "note": note, "buy_date": buy_date}).execute()
+    except: pass
 
 def db_del_port_by_id(uid, db_id):
-    if not HAS_DB: 
-        return
-    try: 
-        _supabase.table("portfolio").delete().eq("id", db_id).eq("user_id", uid).execute()
-    except: 
-        pass
+    if not HAS_DB: return
+    try: _supabase.table("portfolio").delete().eq("id", db_id).eq("user_id", uid).execute()
+    except: pass
 
 def db_del_port(uid, sym):
-    if not HAS_DB: 
-        return
-    try: 
-        _supabase.table("portfolio").delete().eq("user_id", uid).eq("symbol", sym).execute()
-    except: 
-        pass
+    if not HAS_DB: return
+    try: _supabase.table("portfolio").delete().eq("user_id", uid).eq("symbol", sym).execute()
+    except: pass
 
 def db_load_trades(uid):
-    if not HAS_DB: 
-        return []
-    try: 
-        return _supabase.table("trade_history").select("*").eq("user_id",uid).order("created_at",desc=True).execute().data
-    except: 
-        return []
+    if not HAS_DB: return []
+    try: return _supabase.table("trade_history").select("*").eq("user_id",uid).order("created_at",desc=True).execute().data
+    except: return []
 
 def db_add_trade(uid,sym,direction,entry_price,exit_price,shares,entry_date,exit_date,note=""):
-    if not HAS_DB: 
-        return
+    if not HAS_DB: return
     try:
         pnl_amt = round((exit_price-entry_price)*shares*(1 if direction=="LONG" else -1),2)
         pnl_pct = round((exit_price-entry_price)/max(entry_price,0.01)*100*(1 if direction=="LONG" else -1),2)
@@ -242,16 +189,12 @@ def db_add_trade(uid,sym,direction,entry_price,exit_price,shares,entry_date,exit
             "user_id":uid,"symbol":sym,"direction":direction, "entry_price":entry_price,"exit_price":exit_price,"shares":shares,
             "entry_date":entry_date,"exit_date":exit_date, "pnl_amount":pnl_amt,"pnl_pct":pnl_pct,"note":note
         }).execute()
-    except: 
-        pass
+    except: pass
 
 def db_del_trade(uid,trade_id):
-    if not HAS_DB: 
-        return
-    try: 
-        _supabase.table("trade_history").delete().eq("id",trade_id).eq("user_id",uid).execute()
-    except: 
-        pass
+    if not HAS_DB: return
+    try: _supabase.table("trade_history").delete().eq("id",trade_id).eq("user_id",uid).execute()
+    except: pass
 
 # ══════════════════════════════════════════════
 # 4. 靜態資料與工具函數
@@ -311,8 +254,15 @@ def add_recent(sym: str):
     r.insert(0, sym)
     st.session_state.recent_searches = r[:8]
 
+def fmt_large(v):
+    if not isinstance(v,(int,float)): return str(v)
+    if abs(v)>=1e12: return f"{v/1e12:.2f}兆"
+    if abs(v)>=1e8:  return f"{v/1e8:.2f}億"
+    if abs(v)>=1e4:  return f"{v/1e4:.0f}萬"
+    return f"{v:,.2f}"
+
 # ══════════════════════════════════════════════
-# 5. 數據抓取模組
+# 5. 數據抓取模組 (新增基本面與格式化)
 # ══════════════════════════════════════════════
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_data(symbol: str, period: str):
@@ -333,8 +283,16 @@ def fetch_data(symbol: str, period: str):
             info['longName'] = t.info.get('longName', symbol)
             info['sector'] = t.info.get('sector', '其他')
             info['trailingPE'] = t.info.get('trailingPE', 'N/A')
+            info['forwardPE'] = t.info.get('forwardPE', 'N/A')
             info['priceToBook'] = t.info.get('priceToBook', 'N/A')
             info['beta'] = t.info.get('beta', 'N/A')
+            info['marketCap'] = t.info.get('marketCap', 'N/A')
+            
+            dy = t.info.get('dividendYield', 'N/A')
+            if isinstance(dy, float):
+                info['dividendYield'] = f"{dy * 100:.2f}%"
+            else:
+                info['dividendYield'] = 'N/A'
         except: 
             info = {'longName': symbol, 'sector': '其他'}
         return h, info, None
@@ -356,7 +314,7 @@ def fetch_market_overview():
                 if not df.empty and len(df)>=2:
                     c1 = float(df["Close"].iloc[-2])
                     c2 = float(df["Close"].iloc[-1])
-                    rows.append({"名稱":name, "現值":c2, "漲跌%":round((c2 - c1) / max(c1, 0.01) * 100, 2)})
+                    rows.append({"名稱":name, "現值":round(c2, 2), "漲跌%":round((c2 - c1) / max(c1, 0.01) * 100, 2)})
             except: 
                 continue
     except: 
@@ -380,7 +338,7 @@ def fetch_batch_quotes(symbols: tuple) -> dict:
                 if not df.empty and len(df)>=2:
                     c1 = float(df["Close"].iloc[-2])
                     c2 = float(df["Close"].iloc[-1])
-                    results[sym] = (c2, round((c2 - c1) / max(c1, 0.01) * 100, 2))
+                    results[sym] = (round(c2, 2), round((c2 - c1) / max(c1, 0.01) * 100, 2))
                 else: 
                     results[sym] = (None, None)
             except: 
@@ -502,7 +460,6 @@ def calc_indicators(hist: pd.DataFrame) -> dict:
     vr = ind["volume"]/max(ind["vol_ma20"],1)
     ind["vol_ratio"] = round(vr,2)
     
-    # 💡 補回在 V4.0 中遺失的 vol_desc (修復三方辯論 KeyError)
     if vr >= 2.5:   
         ind["vol_desc"] = f"🔥爆量{vr:.1f}倍均量"
     elif vr >= 1.5: 
@@ -675,7 +632,11 @@ def run_screener(symbols: list, conditions: dict) -> list:
                 
     return sorted(results, key=lambda x: x["評分"], reverse=True)
 
-def run_dca(symbol: str, monthly_amount: float, years: int):
+def run_dca(symbol: str, monthly_amount: float, years: int, market: str):
+    # 同時抓取標的物與基準大盤(Benchmark)
+    bm_sym = "^TWII" if "台股" in market else "^GSPC"
+    
+    # 抓取主標的
     hist, _, err = fetch_data(symbol, f"{years}y")
     if err or hist is None: 
         return None, None, err
@@ -710,10 +671,33 @@ def run_dca(symbol: str, monthly_amount: float, years: int):
     dd=(df["資產現值"]-peak)/(peak+1e-10)*100
     mdd=round(dd.min(),2)
     
+    # 抓取基準大盤以計算相對表現
+    bm_hist, _, _ = fetch_data(bm_sym, f"{years}y")
+    bm_rtn_str = "N/A"
+    sharpe_str = "N/A"
+    
+    if bm_hist is not None and not bm_hist.empty:
+        try:
+            bm_start = float(bm_hist["Close"].iloc[0])
+            bm_end = float(bm_hist["Close"].iloc[-1])
+            bm_rtn = ((bm_end - bm_start) / bm_start) * 100
+            bm_rtn_str = f"{bm_rtn:+.2f}%"
+            
+            # 簡化版夏普值: (年化報酬 - 2%無風險利率) / 年化波動率
+            daily_returns = hist["Close"].pct_change().dropna()
+            ann_vol = daily_returns.std() * np.sqrt(252) * 100
+            ann_rtn = rtn / max(years, 1)
+            if ann_vol > 0:
+                sharpe = (ann_rtn - 2.0) / ann_vol
+                sharpe_str = f"{sharpe:.2f}"
+        except:
+            pass
+    
     stats={
         "總投入本金":round(total_inv,0),"最終資產現值":round(fv,0),
-        "累積報酬率":f"{rtn:+.2f}%","年化報酬率":f"{rtn/max(years,1):+.2f}%",
-        "最大回撤MDD":f"{mdd:.2f}%","回測年限":f"{years}年","每月投入":f"{monthly_amount:,.0f}元"
+        "累積報酬率":f"{rtn:+.2f}%","大盤同期報酬": bm_rtn_str,
+        "年化報酬率":f"{rtn/max(years,1):+.2f}%",
+        "最大回撤MDD":f"{mdd:.2f}%","夏普值 (Sharpe)": sharpe_str
     }
     return df, stats, None
 
@@ -770,7 +754,6 @@ def call_ai(api_key: str, prompt: str, use_search: bool = False) -> str:
     raise Exception(f"所有模型均無法使用: {last_err}")
 
 def ai_macro_regime(api_key: str) -> str:
-    # 💡 修正 2: 嚴格限制 AI 輸出為系統定義的陣列字串
     prompt = """You are an elite Macroeconomist. Analyze the current global macroeconomic regime based on this week's data.
 Choose EXACTLY ONE from the following list and output that exact string: [未知, 成長擴張(Risk-On), 通膨衰退(Stagflation), 衰退(Risk-Off), 復甦反彈(Early Cycle), 流動性危機].
 
@@ -867,9 +850,15 @@ Current Macro Regime: {macro_regime}"""
 - (A single punchy summary regarding long-term probability of success)
 """
 
-    bull_rpt = call_ai(api_key, bull_prompt, use_search=True)
-    bear_rpt = call_ai(api_key, bear_prompt, use_search=True)
-    judge_rpt= call_ai(api_key, judge_prompt, use_search=False)
+    # 💡 升級: 使用 ThreadPoolExecutor 並發發送三個請求，時間大幅縮短
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        f_bull = executor.submit(call_ai, api_key, bull_prompt, True)
+        f_bear = executor.submit(call_ai, api_key, bear_prompt, True)
+        f_judge = executor.submit(call_ai, api_key, judge_prompt, False)
+        
+        bull_rpt = f_bull.result()
+        bear_rpt = f_bear.result()
+        judge_rpt = f_judge.result()
     
     return bull_rpt, bear_rpt, judge_rpt
 
@@ -1190,7 +1179,6 @@ with st.sidebar:
             st.session_state.watchlist.pop(i)
             st.rerun()
 
-    # 💡 修正 1: 補回在壓縮時遺漏的名詞解釋區塊
     st.divider()
     st.header("📖 名詞解釋")
     for term,desc in GLOSSARY.items():
@@ -1200,8 +1188,8 @@ with st.sidebar:
 # ══════════════════════════════════════════════
 # 12. 主頁面 (戰情室)
 # ══════════════════════════════════════════════
-st.title("📈 股市小白分析系統 Pro V4.2")
-st.caption("AI三方辯論 × 全週期整合(當沖/短線/長線) × 頂級英文 Prompt 推理能力")
+st.title("📈 股市小白分析系統 Pro V5.0")
+st.caption("AI三方並行推理 × 全週期整合(當沖/波段/長線) × 資金控管模組 × 🔴紅漲🟢跌")
 
 mkt = fetch_market_overview()
 if mkt:
@@ -1219,8 +1207,7 @@ if st.session_state.recent_searches:
             st.session_state.auto_analyze=True
             st.rerun()
 
-# 調整字典使其能相容中英文的對應
-regime_colors={"成長擴張(Risk-On)":"#cc2222","復甦反彈(Early Cycle)":"#aa3333","通膨衰退(Stagflation)":"#446644","衰退(Risk-Off)":"#228844","流動性危機":"#4422aa","未知":"#444444"}
+regime_colors={"Risk-On":"#cc2222","Early Cycle":"#aa3333","Stagflation":"#446644","Risk-Off":"#228844","Liquidity Crisis":"#4422aa","Unknown":"#444444"}
 rc=regime_colors.get(macro_regime,"#444444")
 st.markdown(f'<div style="background:{rc};border-radius:8px;padding:8px 16px;margin:6px 0;text-align:center"><span style="color:white;font-weight:bold">🌍 當前宏觀制度: {macro_regime}</span></div>',unsafe_allow_html=True)
 st.divider()
@@ -1287,6 +1274,9 @@ with TABS[0]:
             else: 
                 st.success("⭐ 追蹤中")
 
+        # 💡 新增功能: 基本面與籌碼數據
+        st.markdown(f"**🏢 基本面速覽:** 總市值 `{fmt_large(info.get('marketCap','N/A'))}` | 預估本益比(Fwd PE) `{info.get('forwardPE','N/A')}` | 殖利率 `{info.get('dividendYield','N/A')}`")
+
         score_col, kpi_col = st.columns([1,2])
         with score_col:
             st.markdown(f'<div class="score-card"><div style="color:#64748b;font-size:11px">綜合健康評分</div><div class="big-score" style="color:{score["gc"]}">{score["total"]}</div><div style="color:#e2e8f0;font-size:13px">{score["grade"]}</div></div>',unsafe_allow_html=True)
@@ -1300,7 +1290,6 @@ with TABS[0]:
 
         st.divider()
 
-        # 💡 修正 4: 廢除醜陋的 st.table，改用 Dashboard 等級的精美卡片排版
         st.markdown("### ⏱️ 多週期技術面評估")
         c_dt, c_st, c_lt = st.columns(3)
         with c_dt:
@@ -1328,10 +1317,9 @@ with TABS[0]:
                 <div style="font-size:13px;color:#94a3b8;">進場: <span style="color:#66cc66">{entry['con_buy']}</span> | 防守: <span style="color:#ff6666">{entry['sl_wide']}</span></div>
             </div>""", unsafe_allow_html=True)
 
-        # 為了排版優美，加上空行
         st.write("")
 
-        with st.expander("💰 詳細區間目標價參考 (不構成投資建議)", expanded=False):
+        with st.expander("💰 詳細區間目標價與部位計算", expanded=False):
             e1,e2,e3 = st.columns(3)
             with e1: 
                 st.markdown(f'<div class="entry-card"><div style="color:#66cc66;font-weight:bold">🎯 買入區</div><div style="margin:8px 0;color:#e2e8f0;line-height:2">長線建倉: <b>{entry["con_buy"]}</b><br>短線波段: <b>{entry["mod_buy"]}</b><br>當沖突破: <b>{entry["agg_buy"]}</b></div></div>',unsafe_allow_html=True)
@@ -1339,6 +1327,22 @@ with TABS[0]:
                 st.markdown(f'<div class="stop-card"><div style="color:#ff6666;font-weight:bold">🛡️ 停損區</div><div style="margin:8px 0;color:#e2e8f0;line-height:2">當沖極短: <b>{entry["sl_tight"]}</b><br>波段標準: <b>{entry["sl_normal"]}</b><br>長線寬幅: <b>{entry["sl_wide"]}</b></div></div>',unsafe_allow_html=True)
             with e3: 
                 st.markdown(f'<div class="target-card"><div style="color:#66aaff;font-weight:bold">🎯 目標價</div><div style="margin:8px 0;color:#e2e8f0;line-height:2">T1(短): <b>{entry["tp1"]}</b><br>T2(中): <b>{entry["tp2"]}</b><br>T3(壓力): <b>{entry["tp3"]}</b></div></div>',unsafe_allow_html=True)
+            
+            # 💡 新增功能: 部位規模計算機 (Position Sizing)
+            st.markdown("#### ⚖️ 部位規模資金控管 (波段策略)")
+            st.caption("根據您的總資金與能承受的單筆虧損，計算最安全的買入股數。")
+            ps1, ps2, ps3 = st.columns(3)
+            capital_in = ps1.number_input("您的總資金 (元)", value=100000, step=10000)
+            risk_in = ps2.number_input("單筆交易願承受風險 (%)", value=2.0, step=0.5, help="機構級建議不超過 2%")
+            
+            risk_amt = capital_in * (risk_in / 100)
+            risk_per_share = max(entry['mod_buy'] - entry['sl_normal'], 0.01)
+            suggested_shares = risk_amt / risk_per_share
+            total_invested = suggested_shares * entry['mod_buy']
+            
+            with ps3:
+                st.info(f"建議買入股數:\n### **{int(suggested_shares):,.0f} 股**")
+                st.caption(f"佔用資金約 {total_invested:,.0f} 元")
 
         st.divider()
         st.markdown("### 📈 技術分析圖表")
@@ -1366,8 +1370,8 @@ with TABS[0]:
         st.markdown("### [AI] 多週期三方辯論分析")
         if not api_key: 
             st.warning("⚠️ 請先於左側輸入 Gemini API 金鑰啟用 AI 分析。")
-        elif st.button("⚔️ 啟動三方辯論(約90秒)",type="primary"):
-            with st.spinner("AI 英文底層邏輯推理中 (輸出將轉為繁體中文)..."):
+        elif st.button("⚔️ 啟動三方並行辯論(約30秒)",type="primary"):
+            with st.spinner("AI 並行推理中 (輸出將轉為繁體中文)..."):
                 try:
                     bull_rpt,bear_rpt,judge_rpt = ai_three_agent_debate(ind,info,sym,api_key,entry,score,macro_regime)
                     debate_tab1,debate_tab2,debate_tab3 = st.tabs(["🔴 多頭論點","🟢 空頭論點","🟣 CIO最終裁決"])
@@ -1396,7 +1400,7 @@ with TABS[0]:
                         st.markdown(secs[0])
                         for sec in secs[1:]:
                             lines = sec.split("\n",1)
-                            if "裁決" in lines[0] or "預測" in lines[0] or "建議" in lines[0] or "Verdict" in lines[0] or "Plan" in lines[0]:
+                            if "裁決" in lines[0] or "預測" in lines[0] or "建議" in lines[0] or "Verdict" in lines[0] or "Plan" in lines[0] or "Key" in lines[0]:
                                 st.markdown(f'<div class="predict-card"><div style="color:#c084fc;font-size:14px;font-weight:bold">## {lines[0]}</div></div>',unsafe_allow_html=True)
                                 st.markdown(lines[1] if len(lines)>1 else "")
                             else:
@@ -1699,13 +1703,16 @@ with TABS[2]:
             dca_btn=st.button("⏳ 回測",type="primary")
             
         if dca_btn and dca_sym.strip():
-            with st.spinner("模擬中..."): 
-                df_dca,stats,err=run_dca(get_sym(dca_sym.strip(),market),dca_amt,dca_yr)
+            with st.spinner("模擬與比對大盤基準中..."): 
+                df_dca,stats,err=run_dca(get_sym(dca_sym.strip(),market),dca_amt,dca_yr,market)
             if df_dca is None: 
                 st.error(err)
             else:
-                for col,(k,v) in zip(st.columns(len(stats)),stats.items()): 
-                    col.metric(k,v)
+                st.markdown("#### 🏆 定期定額 vs 大盤基準 (Sharpe Ratio)")
+                st.caption("夏普值(Sharpe Ratio)代表承擔每1%風險所能獲得的超額報酬。一般認為 > 1 為佳。")
+                cols = st.columns(4)
+                for idx, (k,v) in enumerate(stats.items()): 
+                    cols[idx % 4].metric(k,v)
                 st.plotly_chart(build_dca_chart(df_dca,dca_sym),use_container_width=True)
 
 # ══════════════════════════════════════════════
@@ -1762,4 +1769,4 @@ with TABS[4]:
                         st.error(str(e)[:80])
 
 st.divider()
-st.caption("📈 股市小白分析系統 Pro V4.2 | 🔴紅漲🟢跌 | ⚠️ 內容僅供學習參考，不構成投資建議")
+st.caption("📈 股市小白分析系統 Pro V5.0 | 🔴紅漲🟢跌 | ⚠️ 內容僅供學習參考，不構成投資建議")
