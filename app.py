@@ -1,5 +1,5 @@
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║  股市小白分析系統 Pro  V4.1  ─  全週期量化 × 頂級英文 Prompt 重構版 ║
+# ║  股市小白分析系統 Pro  V4.2  ─  全週期量化 × 頂級英文 Prompt 重構版 ║
 # ║  Taiwan Color: RED=漲  GREEN=跌  |  當沖/短線/長線 三維度決策整合   ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 import streamlit as st
@@ -70,7 +70,7 @@ _DEFS = dict(
     watchlist=[], alerts={}, portfolio={}, trade_history=[], 
     recent_searches=[], quick_sym="", auto_analyze=False,
     confirm_clear_watch=False, confirm_clear_port=False, confirm_clear_trades=False,
-    macro_regime="Unknown",
+    macro_regime="未知",
 )
 for k, v in _DEFS.items():
     if k not in st.session_state: 
@@ -268,7 +268,28 @@ US_HOT = {
     "ETF":     [("SPY","S&P500"),("QQQ","那斯達克"),("VT","全球"),("ARKK","方舟")],
     "其他":    [("TSLA","特斯拉"),("AMZN","亞馬遜"),("META","Meta"),("NFLX","Netflix")],
 }
-MACRO_REGIMES = ["Unknown","Risk-On","Stagflation","Risk-Off","Early Cycle","Liquidity Crisis"]
+
+GLOSSARY = {
+    "RSI":"相對強弱指標0~100。>70超買(漲太快)，<30超賣(跌太多)。",
+    "MACD":"動能指標。柱狀圖正值=動能增強；負值=動能減弱。",
+    "布林通道":"股價正常波動範圍。通道收窄=大行情即將爆發。",
+    "ATR":"每天平均波動多少錢。ATR大=風險高；小=比較穩。",
+    "Stochastic KD":"K>80超買，K<20超賣。",
+    "OBV能量潮":"OBV上升=資金流入；下降=資金流出。",
+    "VWAP":"機構法人的成本均價，現價>VWAP=多方強勢。",
+    "費波那契":"黃金比例支撐壓力位，0.618是最重要的位置。",
+    "本益比PE":"花多少錢買1元獲利，越低可能越便宜。",
+    "ROE":"公司用你的錢賺錢的效率，越高越好。",
+    "停損":"跌到設定價位就出場，保護本金最重要工具。",
+    "風報比":"預期獲利÷預期虧損，至少要2:1以上。",
+    "MDD最大回撤":"從最高點到最低點的最大跌幅，衡量最壞情況。",
+    "蒙地卡羅":"用歷史波動率隨機模擬未來數千條可能路徑，顯示機率區間。",
+    "VIX恐慌指數":">30=市場極度恐慌；<15=市場過度樂觀。",
+    "處置效應":"散戶常見心理偏誤: 太早賣出獲利股，太晚出清虧損股。",
+    "總體宏觀制度":"指當前全球經濟所處的大環境，如通膨衰退、復甦成長等，影響所有資產走向。",
+}
+
+MACRO_REGIMES = ["未知","成長擴張(Risk-On)","通膨衰退(Stagflation)","衰退(Risk-Off)","復甦反彈(Early Cycle)","流動性危機"]
 
 def get_sym(raw: str, market: str) -> str:
     raw = raw.strip().upper()
@@ -480,6 +501,17 @@ def calc_indicators(hist: pd.DataFrame) -> dict:
 
     vr = ind["volume"]/max(ind["vol_ma20"],1)
     ind["vol_ratio"] = round(vr,2)
+    
+    # 💡 補回在 V4.0 中遺失的 vol_desc (修復三方辯論 KeyError)
+    if vr >= 2.5:   
+        ind["vol_desc"] = f"🔥爆量{vr:.1f}倍均量"
+    elif vr >= 1.5: 
+        ind["vol_desc"] = f"📢放量{vr:.1f}倍"
+    elif vr >= 0.8: 
+        ind["vol_desc"] = f"📊正常量{vr:.1f}倍"
+    else:         
+        ind["vol_desc"] = f"😴縮量{vr:.1f}倍，訊號可信度低"
+
     pos = (price-ind["low_52w"])/max(ind["high_52w"]-ind["low_52w"],0.01)*100
     ind["position_52w"] = round(pos,1)
 
@@ -738,12 +770,14 @@ def call_ai(api_key: str, prompt: str, use_search: bool = False) -> str:
     raise Exception(f"所有模型均無法使用: {last_err}")
 
 def ai_macro_regime(api_key: str) -> str:
+    # 💡 修正 2: 嚴格限制 AI 輸出為系統定義的陣列字串
     prompt = """You are an elite Macroeconomist. Analyze the current global macroeconomic regime based on this week's data.
-Choose EXACTLY ONE from the following list: [Risk-On, Stagflation, Risk-Off, Early Cycle, Liquidity Crisis].
-You MUST format your output exactly as shown below, and you MUST write entirely in Traditional Chinese (zh-TW).
+Choose EXACTLY ONE from the following list and output that exact string: [未知, 成長擴張(Risk-On), 通膨衰退(Stagflation), 衰退(Risk-Off), 復甦反彈(Early Cycle), 流動性危機].
 
-**制度: ** [Chosen Regime Name translated to Traditional Chinese]
-**理由: ** [Under 50 words explaining FED policy, GDP, or inflation data.]"""
+You MUST format your output exactly as shown below:
+
+**制度: ** [Exact string from the list above]
+**理由: ** [Under 50 words explaining FED policy, GDP, or inflation data in Traditional Chinese.]"""
     return call_ai(api_key, prompt, use_search=True)
 
 def ai_three_agent_debate(ind, info, sym, api_key, entry, score, macro_regime) -> tuple:
@@ -1009,7 +1043,7 @@ def build_mc_standalone(mc_data: dict, sym: str) -> go.Figure:
     return fig
 
 # ══════════════════════════════════════════════
-# 11. 側邊欄 (含 Cookie 自動登入機制)
+# 11. 側邊欄 (含 Cookie 自動登入機制與名詞解釋)
 # ══════════════════════════════════════════════
 with st.sidebar:
     st.header("⚙️ 系統設定")
@@ -1130,7 +1164,7 @@ with st.sidebar:
                         st.session_state.macro_regime=r
                         macro_regime=r
                         break
-                st.success(f"✅ {st.session_state.macro_regime}")
+                st.success(f"✅ 偵測完成: {st.session_state.macro_regime}")
                 with st.expander("查看分析"): 
                     st.markdown(regime_rpt)
             except Exception as e: 
@@ -1156,10 +1190,17 @@ with st.sidebar:
             st.session_state.watchlist.pop(i)
             st.rerun()
 
+    # 💡 修正 1: 補回在壓縮時遺漏的名詞解釋區塊
+    st.divider()
+    st.header("📖 名詞解釋")
+    for term,desc in GLOSSARY.items():
+        with st.expander(term): 
+            st.info(desc)
+
 # ══════════════════════════════════════════════
 # 12. 主頁面 (戰情室)
 # ══════════════════════════════════════════════
-st.title("📈 股市小白分析系統 Pro V4.1")
+st.title("📈 股市小白分析系統 Pro V4.2")
 st.caption("AI三方辯論 × 全週期整合(當沖/短線/長線) × 頂級英文 Prompt 推理能力")
 
 mkt = fetch_market_overview()
@@ -1178,7 +1219,8 @@ if st.session_state.recent_searches:
             st.session_state.auto_analyze=True
             st.rerun()
 
-regime_colors={"Risk-On":"#cc2222","Early Cycle":"#aa3333","Stagflation":"#446644","Risk-Off":"#228844","Liquidity Crisis":"#4422aa","Unknown":"#444444"}
+# 調整字典使其能相容中英文的對應
+regime_colors={"成長擴張(Risk-On)":"#cc2222","復甦反彈(Early Cycle)":"#aa3333","通膨衰退(Stagflation)":"#446644","衰退(Risk-Off)":"#228844","流動性危機":"#4422aa","未知":"#444444"}
 rc=regime_colors.get(macro_regime,"#444444")
 st.markdown(f'<div style="background:{rc};border-radius:8px;padding:8px 16px;margin:6px 0;text-align:center"><span style="color:white;font-weight:bold">🌍 當前宏觀制度: {macro_regime}</span></div>',unsafe_allow_html=True)
 st.divider()
@@ -1258,13 +1300,36 @@ with TABS[0]:
 
         st.divider()
 
+        # 💡 修正 4: 廢除醜陋的 st.table，改用 Dashboard 等級的精美卡片排版
         st.markdown("### ⏱️ 多週期技術面評估")
-        df_tf = pd.DataFrame([
-            {"投資週期": "⚡ 當沖 (日內)", "核心關注指標": "VWAP, 日內波幅, 爆量", "當前狀態評估": ind["dt_status"], "進場參考區": entry['agg_buy'], "防守/停損價": entry['sl_tight']},
-            {"投資週期": "📈 短線 (數週波段)", "核心關注指標": "MA5/MA20, RSI, MACD", "當前狀態評估": ind["st_status"], "進場參考區": entry['mod_buy'], "防守/停損價": entry['sl_normal']},
-            {"投資週期": "💎 長線 (數月-年)", "核心關注指標": "MA60, 52W位階, 均值回歸", "當前狀態評估": ind["lt_status"], "進場參考區": entry['con_buy'], "防守/停損價": entry['sl_wide']}
-        ])
-        st.table(df_tf.set_index("投資週期"))
+        c_dt, c_st, c_lt = st.columns(3)
+        with c_dt:
+            st.markdown(f"""
+            <div style="background:#1e1e2e;padding:16px;border-radius:12px;border:1px solid #3a3a5e;border-top:4px solid #f59e0b;height:100%;">
+                <h4 style="margin-top:0;color:#f59e0b;">⚡ 當沖 (日內)</h4>
+                <div style="font-size:12px;color:#64748b;margin-bottom:8px;">關注: VWAP, 日內波幅, 爆量</div>
+                <div style="font-size:15px;color:#e2e8f0;font-weight:bold;margin-bottom:12px;">{ind['dt_status']}</div>
+                <div style="font-size:13px;color:#94a3b8;">進場: <span style="color:#66cc66">{entry['agg_buy']}</span> | 防守: <span style="color:#ff6666">{entry['sl_tight']}</span></div>
+            </div>""", unsafe_allow_html=True)
+        with c_st:
+            st.markdown(f"""
+            <div style="background:#1e1e2e;padding:16px;border-radius:12px;border:1px solid #3a3a5e;border-top:4px solid #3b82f6;height:100%;">
+                <h4 style="margin-top:0;color:#3b82f6;">📈 短線 (波段)</h4>
+                <div style="font-size:12px;color:#64748b;margin-bottom:8px;">關注: MA5/MA20, RSI, MACD</div>
+                <div style="font-size:15px;color:#e2e8f0;font-weight:bold;margin-bottom:12px;">{ind['st_status']}</div>
+                <div style="font-size:13px;color:#94a3b8;">進場: <span style="color:#66cc66">{entry['mod_buy']}</span> | 防守: <span style="color:#ff6666">{entry['sl_normal']}</span></div>
+            </div>""", unsafe_allow_html=True)
+        with c_lt:
+            st.markdown(f"""
+            <div style="background:#1e1e2e;padding:16px;border-radius:12px;border:1px solid #3a3a5e;border-top:4px solid #8b5cf6;height:100%;">
+                <h4 style="margin-top:0;color:#8b5cf6;">💎 長線 (存股)</h4>
+                <div style="font-size:12px;color:#64748b;margin-bottom:8px;">關注: 季線(MA60), 位階, 均值回歸</div>
+                <div style="font-size:15px;color:#e2e8f0;font-weight:bold;margin-bottom:12px;">{ind['lt_status']}</div>
+                <div style="font-size:13px;color:#94a3b8;">進場: <span style="color:#66cc66">{entry['con_buy']}</span> | 防守: <span style="color:#ff6666">{entry['sl_wide']}</span></div>
+            </div>""", unsafe_allow_html=True)
+
+        # 為了排版優美，加上空行
+        st.write("")
 
         with st.expander("💰 詳細區間目標價參考 (不構成投資建議)", expanded=False):
             e1,e2,e3 = st.columns(3)
@@ -1697,4 +1762,4 @@ with TABS[4]:
                         st.error(str(e)[:80])
 
 st.divider()
-st.caption("📈 股市小白分析系統 Pro V4.1 | 🔴紅漲🟢跌 | ⚠️ 內容僅供學習參考，不構成投資建議")
+st.caption("📈 股市小白分析系統 Pro V4.2 | 🔴紅漲🟢跌 | ⚠️ 內容僅供學習參考，不構成投資建議")
