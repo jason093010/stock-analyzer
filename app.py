@@ -1,5 +1,5 @@
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║  股市小白分析系統 Pro  V5.0  ─  終極全週期量化 × 資金控管 × 並行 AI   ║
+# ║  股市小白分析系統 Pro  V5.1  ─  終極全週期量化 × 資金控管 × 並行 AI   ║
 # ║  Taiwan Color: RED=漲  GREEN=跌  |  當沖/短線/長線 三維度決策整合   ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 import streamlit as st
@@ -64,7 +64,7 @@ _DEFS = dict(
     watchlist=[], alerts={}, portfolio={}, trade_history=[], 
     recent_searches=[], quick_sym="", auto_analyze=False,
     confirm_clear_watch=False, confirm_clear_port=False, confirm_clear_trades=False,
-    macro_regime="Unknown",
+    macro_regime="未知",
 )
 for k, v in _DEFS.items():
     if k not in st.session_state: 
@@ -633,10 +633,8 @@ def run_screener(symbols: list, conditions: dict) -> list:
     return sorted(results, key=lambda x: x["評分"], reverse=True)
 
 def run_dca(symbol: str, monthly_amount: float, years: int, market: str):
-    # 同時抓取標的物與基準大盤(Benchmark)
     bm_sym = "^TWII" if "台股" in market else "^GSPC"
     
-    # 抓取主標的
     hist, _, err = fetch_data(symbol, f"{years}y")
     if err or hist is None: 
         return None, None, err
@@ -671,7 +669,6 @@ def run_dca(symbol: str, monthly_amount: float, years: int, market: str):
     dd=(df["資產現值"]-peak)/(peak+1e-10)*100
     mdd=round(dd.min(),2)
     
-    # 抓取基準大盤以計算相對表現
     bm_hist, _, _ = fetch_data(bm_sym, f"{years}y")
     bm_rtn_str = "N/A"
     sharpe_str = "N/A"
@@ -683,7 +680,6 @@ def run_dca(symbol: str, monthly_amount: float, years: int, market: str):
             bm_rtn = ((bm_end - bm_start) / bm_start) * 100
             bm_rtn_str = f"{bm_rtn:+.2f}%"
             
-            # 簡化版夏普值: (年化報酬 - 2%無風險利率) / 年化波動率
             daily_returns = hist["Close"].pct_change().dropna()
             ann_vol = daily_returns.std() * np.sqrt(252) * 100
             ann_rtn = rtn / max(years, 1)
@@ -773,7 +769,7 @@ Score: {score['total']}/100 ({score['grade']}) | Status: {ind['status']}
 MA5={ind['ma5']} MA20={ind['ma20']} MA60={ind['ma60']}
 RSI={ind['rsi']} StochK={ind['stoch_k']} Williams%R={ind['williams_r']}
 MACD_H={ind['macd_hist']} ATR={atr} OBV={'Up' if ind['obv']>0 else 'Down'}
-BB_Position={ind['bb_pct']:.0f}% | Vol_Desc={ind['vol_desc']} | 52W_Position={ind['position_52w']}%
+BB_Position={ind['bb_pct']:.0f}% | Vol_Desc={ind.get('vol_desc', 'N/A')} | 52W_Position={ind['position_52w']}%
 Support={entry['sup1']}/{entry['sup2']} | Resistance={entry['res1']}/{entry['res2']}
 PE={info.get('trailingPE','N/A')} | PB={info.get('priceToBook','N/A')} | Beta={info.get('beta','N/A')}
 Current Macro Regime: {macro_regime}"""
@@ -850,7 +846,6 @@ Current Macro Regime: {macro_regime}"""
 - (A single punchy summary regarding long-term probability of success)
 """
 
-    # 💡 升級: 使用 ThreadPoolExecutor 並發發送三個請求，時間大幅縮短
     with ThreadPoolExecutor(max_workers=3) as executor:
         f_bull = executor.submit(call_ai, api_key, bull_prompt, True)
         f_bear = executor.submit(call_ai, api_key, bear_prompt, True)
@@ -1143,16 +1138,29 @@ with st.sidebar:
     st.divider()
     st.header("🌍 宏觀制度設定")
     
-    # 防呆機制：如果暫存裡記住的是舊版不相容的字串，自動切回預設值 "未知"
+    # 💡 修正 1: 全自動偵測宏觀制度 (系統啟動時若為未知且有 API Key，則自動執行一次)
     current_regime = st.session_state.macro_regime
     if current_regime not in MACRO_REGIMES:
         current_regime = MACRO_REGIMES[0]
         st.session_state.macro_regime = current_regime
-        
+
+    if api_key and current_regime == MACRO_REGIMES[0]:
+        with st.spinner("🌍 系統初始化：背景自動偵測全球宏觀制度中..."):
+            try:
+                regime_rpt = ai_macro_regime(api_key)
+                for r in MACRO_REGIMES[1:]:
+                    if r in regime_rpt: 
+                        st.session_state.macro_regime = r
+                        current_regime = r
+                        break
+            except: 
+                pass
+
     macro_regime = st.selectbox("當前宏觀制度",MACRO_REGIMES,index=MACRO_REGIMES.index(current_regime),key="macro_sel")
     st.session_state.macro_regime = macro_regime
-    if api_key and st.button("🔍 AI自動偵測",use_container_width=True):
-        with st.spinner("搜尋中..."):
+    
+    if api_key and st.button("🔄 手動重新偵測",use_container_width=True):
+        with st.spinner("重新搜尋與評估中..."):
             try:
                 regime_rpt = ai_macro_regime(api_key)
                 for r in MACRO_REGIMES[1:]:
@@ -1161,7 +1169,7 @@ with st.sidebar:
                         macro_regime=r
                         break
                 st.success(f"✅ 偵測完成: {st.session_state.macro_regime}")
-                with st.expander("查看分析"): 
+                with st.expander("查看 AI 分析報告"): 
                     st.markdown(regime_rpt)
             except Exception as e: 
                 st.error(str(e)[:50])
@@ -1195,8 +1203,8 @@ with st.sidebar:
 # ══════════════════════════════════════════════
 # 12. 主頁面 (戰情室)
 # ══════════════════════════════════════════════
-st.title("📈 股市小白分析系統 Pro V5.0")
-st.caption("AI三方並行推理 × 全週期整合(當沖/波段/長線) × 資金控管模組 × 🔴紅漲🟢跌")
+st.title("📈 股市小白分析系統 Pro V5.1")
+st.caption("自動宏觀偵測 × 全週期整合(當沖/波段/長線) × 資金控管模組 × 🔴紅漲🟢跌")
 
 mkt = fetch_market_overview()
 if mkt:
@@ -1214,7 +1222,7 @@ if st.session_state.recent_searches:
             st.session_state.auto_analyze=True
             st.rerun()
 
-regime_colors={"Risk-On":"#cc2222","Early Cycle":"#aa3333","Stagflation":"#446644","Risk-Off":"#228844","Liquidity Crisis":"#4422aa","Unknown":"#444444"}
+regime_colors={"成長擴張(Risk-On)":"#cc2222","復甦反彈(Early Cycle)":"#aa3333","通膨衰退(Stagflation)":"#446644","衰退(Risk-Off)":"#228844","流動性危機":"#4422aa","未知":"#444444"}
 rc=regime_colors.get(macro_regime,"#444444")
 st.markdown(f'<div style="background:{rc};border-radius:8px;padding:8px 16px;margin:6px 0;text-align:center"><span style="color:white;font-weight:bold">🌍 當前宏觀制度: {macro_regime}</span></div>',unsafe_allow_html=True)
 st.divider()
@@ -1281,7 +1289,6 @@ with TABS[0]:
             else: 
                 st.success("⭐ 追蹤中")
 
-        # 💡 新增功能: 基本面與籌碼數據
         st.markdown(f"**🏢 基本面速覽:** 總市值 `{fmt_large(info.get('marketCap','N/A'))}` | 預估本益比(Fwd PE) `{info.get('forwardPE','N/A')}` | 殖利率 `{info.get('dividendYield','N/A')}`")
 
         score_col, kpi_col = st.columns([1,2])
@@ -1297,6 +1304,7 @@ with TABS[0]:
 
         st.divider()
 
+        # 💡 修正 2: 徹底刪除舊的 st.table，只保留設計好的高級資訊卡片
         st.markdown("### ⏱️ 多週期技術面評估")
         c_dt, c_st, c_lt = st.columns(3)
         with c_dt:
@@ -1335,7 +1343,6 @@ with TABS[0]:
             with e3: 
                 st.markdown(f'<div class="target-card"><div style="color:#66aaff;font-weight:bold">🎯 目標價</div><div style="margin:8px 0;color:#e2e8f0;line-height:2">T1(短): <b>{entry["tp1"]}</b><br>T2(中): <b>{entry["tp2"]}</b><br>T3(壓力): <b>{entry["tp3"]}</b></div></div>',unsafe_allow_html=True)
             
-            # 💡 新增功能: 部位規模計算機 (Position Sizing)
             st.markdown("#### ⚖️ 部位規模資金控管 (波段策略)")
             st.caption("根據您的總資金與能承受的單筆虧損，計算最安全的買入股數。")
             ps1, ps2, ps3 = st.columns(3)
@@ -1356,13 +1363,16 @@ with TABS[0]:
         show_mc = st.checkbox("🎲 開啟蒙地卡羅30日模擬")
         mc_data = monte_carlo_simulation(hist) if show_mc else None
 
+        # 💡 修正 3: 修復 dict object 抓取報錯
         buy_markers = []
         if sym in st.session_state.portfolio:
             entries = st.session_state.portfolio[sym]
             if isinstance(entries, dict): 
-                entries = [entries] 
+                entries = [entries]
+            elif isinstance(entries, str): 
+                entries = []
             for pd2 in entries:
-                if pd2.get("buy_date"):
+                if isinstance(pd2, dict) and pd2.get("buy_date"):
                     try:
                         bdate = pd.to_datetime(pd2["buy_date"])
                         if bdate.tz: 
@@ -1776,4 +1786,4 @@ with TABS[4]:
                         st.error(str(e)[:80])
 
 st.divider()
-st.caption("📈 股市小白分析系統 Pro V5.0 | 🔴紅漲🟢跌 | ⚠️ 內容僅供學習參考，不構成投資建議")
+st.caption("📈 股市小白分析系統 Pro V5.1 | 🔴紅漲🟢跌 | ⚠️ 內容僅供學習參考，不構成投資建議")
