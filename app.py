@@ -1116,40 +1116,43 @@ with st.sidebar:
     st.divider()
     st.header("🌍 宏觀制度設定")
     
-    current_regime = st.session_state.macro_regime
-    if current_regime not in MACRO_REGIMES:
-        current_regime = MACRO_REGIMES[0]
-        st.session_state.macro_regime = current_regime
+    # 初始化選單記憶體
+    if "macro_sel" not in st.session_state:
+        st.session_state.macro_sel = MACRO_REGIMES[0]
 
-    # 💡 記憶開關防呆: 確保啟動時只偵測一次，不再死迴圈
-    if api_key and current_regime == MACRO_REGIMES[0] and not st.session_state.macro_auto_tried:
+    # 💡 背景自動偵測 (直接寫入選單記憶體)
+    if api_key and st.session_state.macro_sel == MACRO_REGIMES[0] and not st.session_state.macro_auto_tried:
         st.session_state.macro_auto_tried = True
         with st.spinner("🌍 系統初始化：背景自動偵測全球宏觀制度中..."):
             try:
                 regime_rpt = ai_macro_regime(api_key)
                 for r in MACRO_REGIMES[1:]:
                     if r in regime_rpt: 
-                        st.session_state.macro_regime = r
-                        current_regime = r
+                        st.session_state.macro_sel = r
                         break
             except: 
                 pass
 
-    macro_regime = st.selectbox("當前宏觀制度",MACRO_REGIMES,index=MACRO_REGIMES.index(current_regime),key="macro_sel")
-    st.session_state.macro_regime = macro_regime
+    # 下拉選單 (它會自動讀取並同步 st.session_state.macro_sel)
+    macro_regime = st.selectbox("當前宏觀制度", MACRO_REGIMES, key="macro_sel")
     
-    if api_key and st.button("🔄 手動重新偵測",use_container_width=True):
+    if api_key and st.button("🔄 手動重新偵測", use_container_width=True):
         with st.spinner("重新搜尋與評估中..."):
             try:
                 regime_rpt = ai_macro_regime(api_key)
+                detected = False
                 for r in MACRO_REGIMES[1:]:
                     if r in regime_rpt: 
-                        st.session_state.macro_regime=r
-                        macro_regime=r
+                        st.session_state.macro_sel = r
+                        detected = True
                         break
-                st.success(f"✅ 偵測完成: {st.session_state.macro_regime}")
-                with st.expander("查看 AI 分析報告"): 
-                    st.markdown(regime_rpt)
+                
+                if detected:
+                    st.success(f"✅ 偵測完成: {st.session_state.macro_sel}")
+                    time.sleep(1) # 讓成功訊息顯示 1 秒
+                    st.rerun()    # 強制刷新畫面，徹底鎖定記憶體
+                else:
+                    st.warning("⚠️ 偵測失敗，請稍後重試")
             except Exception as e: 
                 st.error(str(e)[:50])
 
