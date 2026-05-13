@@ -1142,7 +1142,14 @@ with st.sidebar:
 
     st.divider()
     st.header("🌍 宏觀制度設定")
-    macro_regime = st.selectbox("當前宏觀制度",MACRO_REGIMES,index=MACRO_REGIMES.index(st.session_state.macro_regime),key="macro_sel")
+    
+    # 防呆機制：如果暫存裡記住的是舊版不相容的字串，自動切回預設值 "未知"
+    current_regime = st.session_state.macro_regime
+    if current_regime not in MACRO_REGIMES:
+        current_regime = MACRO_REGIMES[0]
+        st.session_state.macro_regime = current_regime
+        
+    macro_regime = st.selectbox("當前宏觀制度",MACRO_REGIMES,index=MACRO_REGIMES.index(current_regime),key="macro_sel")
     st.session_state.macro_regime = macro_regime
     if api_key and st.button("🔍 AI自動偵測",use_container_width=True):
         with st.spinner("搜尋中..."):
