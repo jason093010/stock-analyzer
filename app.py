@@ -1,5 +1,5 @@
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║  股市小白分析系統 Pro  V5.1  ─  終極全週期量化 × 資金控管 × 並行 AI   ║
+# ║  股市小白分析系統 Pro  V5.2  ─  防 429 封鎖 × 全面極度新手白話文版  ║
 # ║  Taiwan Color: RED=漲  GREEN=跌  |  當沖/短線/長線 三維度決策整合   ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 import streamlit as st
@@ -13,7 +13,6 @@ from google import genai
 from google.genai import types as genai_types
 import time, hashlib, base64, json
 from datetime import datetime, date, timedelta
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -262,7 +261,7 @@ def fmt_large(v):
     return f"{v:,.2f}"
 
 # ══════════════════════════════════════════════
-# 5. 數據抓取模組 (新增基本面與格式化)
+# 5. 數據抓取模組
 # ══════════════════════════════════════════════
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_data(symbol: str, period: str):
@@ -480,19 +479,19 @@ def calc_indicators(hist: pd.DataFrame) -> dict:
     kv=ind["stoch_k"]
     mv=ind["macd_hist"]
     if ind["ma5"]>ind["ma20"]>ind["ma60"] and rv>55 and mv>0: 
-        ind["status"], ind["sc"], ind["status_desc"] = "強勢多頭 📈", "🔴", "均線多頭排列＋RSI偏強＋MACD正值，三重確認多頭。"
+        ind["status"], ind["sc"], ind["status_desc"] = "強勢多頭 📈", "🔴", "均線多頭排列，上漲動能強"
     elif ind["ma5"]<ind["ma20"]<ind["ma60"] and rv<45 and mv<0: 
-        ind["status"], ind["sc"], ind["status_desc"] = "強勢空頭 📉", "🟢", "均線空頭排列＋RSI偏弱＋MACD負值，三重確認空頭。"
+        ind["status"], ind["sc"], ind["status_desc"] = "強勢空頭 📉", "🟢", "均線空頭排列，下跌壓力大"
     elif rv<=30 and kv<20: 
-        ind["status"], ind["sc"], ind["status_desc"] = "雙重超賣 🟡", "🟡", "RSI與Stochastic雙超賣，反彈機率升高，需量能確認。"
+        ind["status"], ind["sc"], ind["status_desc"] = "雙重超賣 🟡", "🟡", "跌很多了，隨時可能出現反彈"
     elif rv>=70 and kv>80: 
-        ind["status"], ind["sc"], ind["status_desc"] = "雙重超買 🟡", "🟡", "RSI與Stochastic雙超買，短線獲利了結壓力大。"
+        ind["status"], ind["sc"], ind["status_desc"] = "雙重超買 🟡", "🟡", "漲太多了，短期可能有獲利了結賣壓"
     elif abs(ind["ma5"]-ind["ma20"])/max(price,0.01)<0.015: 
-        ind["status"], ind["sc"], ind["status_desc"] = "均線糾結蓄勢 ⚪", "⚪", "均線纏繞，等待突破，大行情可能即將爆發。"
+        ind["status"], ind["sc"], ind["status_desc"] = "盤整蓄勢 ⚪", "⚪", "價格上下震盪，等待出明確方向"
     elif ind["ma5"]>ind["ma20"] and rv>50: 
-        ind["status"], ind["sc"], ind["status_desc"] = "短線偏多 🔵", "🔵", "短均線在長均線上方，RSI偏強，短線多方略佔優勢。"
+        ind["status"], ind["sc"], ind["status_desc"] = "短線偏多 🔵", "🔵", "短期趨勢向上，多方稍微佔優勢"
     else: 
-        ind["status"], ind["sc"], ind["status_desc"] = "弱勢盤整 🟠", "🟠", "走勢疲軟，方向不明，建議觀望。"
+        ind["status"], ind["sc"], ind["status_desc"] = "方向不明 🟠", "🟠", "走勢疲軟，建議新手先觀望"
 
     return ind
 
@@ -623,7 +622,8 @@ def run_screener(symbols: list, conditions: dict) -> list:
             pass
         return None
         
-    with ThreadPoolExecutor(max_workers=6) as ex:
+    # 限制並發數避免 API 被鎖
+    with ThreadPoolExecutor(max_workers=3) as ex:
         futs = [ex.submit(_check,s) for s in symbols]
         for f in as_completed(futs):
             r = f.result()
@@ -725,7 +725,7 @@ def analyze_behavioral_bias(trades: list) -> dict:
     }
 
 # ══════════════════════════════════════════════
-# 9. AI 生成模組 (English Prompts -> zh-TW Output)
+# 9. AI 生成模組 (強制新手白話文版)
 # ══════════════════════════════════════════════
 def call_ai(api_key: str, prompt: str, use_search: bool = False) -> str:
     client = genai.Client(api_key=api_key)
@@ -774,148 +774,121 @@ Support={entry['sup1']}/{entry['sup2']} | Resistance={entry['res1']}/{entry['res
 PE={info.get('trailingPE','N/A')} | PB={info.get('priceToBook','N/A')} | Beta={info.get('beta','N/A')}
 Current Macro Regime: {macro_regime}"""
 
-    bull_prompt = f"""You are a Permabull Analyst. Your task is to construct the strongest possible bullish argument for this stock.
-
+    # 💡 核心優化: 強制 AI 寫給完全不懂股票的「小白」看
+    bull_prompt = f"""You are a Permabull Analyst. Construct the strongest possible bullish argument for this stock.
 {base_data}
-
-[RULES]
-- Macro 'Risk-On'/'Early Cycle': Add +20% confidence to your bullish case.
-- Macro 'Stagflation'/'Risk-Off': Focus on defensive strength and oversold bounce potential.
-- Macro 'Liquidity Crisis': Acknowledge the harsh environment but find stock-specific alpha.
-- You MUST output entirely in Traditional Chinese (zh-TW).
-- DO NOT use absolute words like "guarantee", "100%", or "certain".
-- DO NOT mention any bearish arguments.
+[TONE REQUIREMENT]: You MUST write for a complete beginner in the stock market (股市小白). Use simple everyday analogies. AVOID complex financial jargon. Explain concepts in extremely plain, easy-to-understand Traditional Chinese (zh-TW).
 
 [OUTPUT FORMAT (Strictly use these exact markdown headers)]
-## 🔴 多頭核心催化劑 (Core Catalysts)
-- (List 3 latest positive news/catalysts based on real-time search)
-## 📈 技術面多頭證據 (Technical Evidence)
-- (Identify the top 3 strongest bullish signals from the provided indicators)
-## ⏱️ 多週期展望 (Multi-Timeframe Outlook)
-- ⚡ **當沖/隔日沖**: (Assess intraday momentum and breakout potential)
-- 📈 **短線波段**: (Assess weekly upside probability)
-- 💎 **長線投資**: (Assess long-term value and fundamentals)
-## 🌍 宏觀制度加分 (Macro Tailwinds)
-- (Explain why this stock thrives under the {macro_regime} regime)
+## 🔴 為什麼看漲？ (核心利多)
+- (List 3 latest positive news using simple words)
+## 📈 圖表上的好消息 (技術面)
+- (Explain 3 technical signals simply, like "RSI is low, meaning the stock is on sale")
+## ⏱️ 不同玩家的建議 (多週期展望)
+- ⚡ **當沖(今天買賣)**: (Plain advice for day traders)
+- 📈 **波段(抱幾週)**: (Plain advice for swing traders)
+- 💎 **存股(抱很久)**: (Plain advice for long term holders)
+## 🌍 大環境的順風車 (宏觀影響)
+- (Explain why the {macro_regime} environment is good for this stock using a simple analogy)
 """
 
-    bear_prompt = f"""You are a Ruthless Bear Analyst. Your task is to expose all bearish risks for this stock.
-
+    bear_prompt = f"""You are a Ruthless Bear Analyst. Expose all bearish risks for this stock.
 {base_data}
-
-[RULES]
-- Macro 'Stagflation'/'Risk-Off'/'Liquidity Crisis': Add +20% confidence to your bearish case.
-- You MUST point out macroeconomic and FED policy risks.
-- You MUST output entirely in Traditional Chinese (zh-TW).
-- DO NOT use absolute words like "guarantee" or "certain".
-- DO NOT mention any bullish arguments.
+[TONE REQUIREMENT]: You MUST write for a complete beginner in the stock market (股市小白). Use simple everyday analogies. AVOID complex financial jargon. Explain concepts in extremely plain, easy-to-understand Traditional Chinese (zh-TW).
 
 [OUTPUT FORMAT (Strictly use these exact markdown headers)]
-## 🟢 空頭核心威脅 (Core Threats)
-- (List 3 latest negative news/risks based on real-time search)
-## 📉 技術面空頭證據 (Technical Evidence)
-- (Identify the top 3 strongest bearish signals from the provided indicators)
-## ⏱️ 多週期風險 (Multi-Timeframe Risks)
-- ⚡ **當沖/隔日沖**: (Assess intraday reversal or selling pressure risks)
-- 📉 **短線波段**: (Assess weekly downside potential)
-- 🏚️ **長線投資**: (Assess long-term fundamental deterioration)
-## 🦢 黑天鵝事件 (Black Swan Risk)
-- (One highly specific event that could destroy this stock)
+## 🟢 為什麼看跌？ (核心風險)
+- (List 3 latest negative news using simple words)
+## 📉 圖表上的壞消息 (技術面)
+- (Explain 3 bearish technical signals simply, like "The price broke below the moving average support")
+## ⏱️ 不同玩家的風險 (多週期風險)
+- ⚡ **當沖(今天買賣)**: (Plain risk warning for day traders)
+- 📉 **波段(抱幾週)**: (Plain risk warning for swing traders)
+- 🏚️ **存股(抱很久)**: (Plain risk warning for long term holders)
+## 🦢 最怕發生的黑天鵝 (潛在未爆彈)
+- (One highly specific risk that a beginner should watch out for)
 """
 
-    judge_prompt = f"""You are a rational Chief Investment Officer (CIO). Your task is to adjudicate the bullish and bearish arguments objectively.
-
+    judge_prompt = f"""You are a rational Chief Investment Officer (CIO). Adjudicate the bullish and bearish arguments objectively.
 {base_data}
-
-[RULES]
-- Apply strict risk management based on the Macro Regime ({macro_regime}).
-- You MUST output entirely in Traditional Chinese (zh-TW).
-- Be highly objective and data-driven.
+[TONE REQUIREMENT]: You MUST write for a complete beginner in the stock market (股市小白). Use simple everyday analogies. AVOID complex financial jargon. Explain concepts in extremely plain, easy-to-understand Traditional Chinese (zh-TW).
 
 [OUTPUT FORMAT (Strictly use these exact markdown headers)]
-## 🟣 CIO最終裁決 (CIO Final Verdict)
-- **多空對比 (Bull vs Bear Strength)**: (Score the bull vs bear setup out of 10)
-## ⏱️ 分級操作建議 (Actionable Multi-Timeframe Plan)
-- ⚡ **當沖/隔日沖**: (Bullish/Bearish/Neutral + Specific action plan)
-- 📈 **短線波段**: (Bullish/Bearish/Neutral + Specific action plan)
-- 💎 **長線存股**: (Explicit verdict on whether this is suitable for long-term holding)
-## 🎯 關鍵點位預測 (Key Levels)
-- Support: **{entry['sup1']}** (If broken, bears win)
-- Resistance: **{entry['res1']}** (If broken with volume, bulls win)
-## 💡 給長線投資人的一句話 (One Sentence for Long-Term Investors)
-- (A single punchy summary regarding long-term probability of success)
+## 🟣 裁判最終判定 (CIO 結論)
+- **多空大對決**: (Give a simple score or winner between bull and bear)
+## ⏱️ 給你的操作建議 (分級計畫)
+- ⚡ **當沖(今天買賣)**: (Clear action: Buy/Sell/Wait + simple reason)
+- 📈 **波段(抱幾週)**: (Clear action: Buy/Sell/Wait + simple reason)
+- 💎 **存股(抱很久)**: (Clear action: Yes/No + simple reason)
+## 🎯 新手防守線 (關鍵點位)
+- 萬一跌破 **{entry['sup1']}**，記得快跑 (停損點)
+- 如果衝破 **{entry['res1']}**，可以考慮加碼 (突破點)
+## 💡 給新手的一句真心話
+- (A single punchy, fatherly advice regarding this stock)
 """
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        f_bull = executor.submit(call_ai, api_key, bull_prompt, True)
-        f_bear = executor.submit(call_ai, api_key, bear_prompt, True)
-        f_judge = executor.submit(call_ai, api_key, judge_prompt, False)
-        
-        bull_rpt = f_bull.result()
-        bear_rpt = f_bear.result()
-        judge_rpt = f_judge.result()
+    # 💡 核心防護: 改回依序執行 (Sequential Execution) 以防止 Google API 429 封鎖
+    # 加入小段暫停(Sleep)確保請求不會疊加
+    bull_rpt = call_ai(api_key, bull_prompt, use_search=True)
+    time.sleep(1.5)
+    bear_rpt = call_ai(api_key, bear_prompt, use_search=True)
+    time.sleep(1.5)
+    judge_rpt= call_ai(api_key, judge_prompt, use_search=False)
     
     return bull_rpt, bear_rpt, judge_rpt
 
 def ai_portfolio_cio(portfolio_data: str, sector_data: str, api_key: str) -> str:
-    prompt = f"""You are a strict Chief Investment Officer (CIO) auditing a client's portfolio. Your mandate is to cut losers and ride winners.
-
+    prompt = f"""You are a strict Chief Investment Officer (CIO) auditing a client's portfolio.
 [PORTFOLIO DATA]
 {portfolio_data}
 Sector Allocation: {sector_data}
 
-[RULES]
-- Output entirely in Traditional Chinese (zh-TW).
-- Be extremely objective and ruthless.
+[TONE REQUIREMENT]: MUST write for a beginner. Use plain, everyday Traditional Chinese (zh-TW). Avoid jargon. Explain WHY they should keep or sell in simple terms.
 
-[OUTPUT FORMAT (Strictly use these exact markdown headers)]
-## 🏦 組合健康診斷 (Portfolio Health Check)
-- (Assess sector concentration, risk, and long/short balance)
-## ⚔️ 多週期汰弱留強建議 (Multi-Timeframe Audit Per Stock)
-(For EACH stock in the portfolio, you MUST provide explicit advice for all three timeframes:)
+[OUTPUT FORMAT]
+## 🏦 你的持股健康檢查
+- (Assess sector concentration simply, e.g., "You have too many tech stocks, it's like putting all your eggs in one basket.")
+## ⚔️ 汰弱留強大掃除 (每檔股票建議)
+(For EACH stock, give advice for short and long term):
 - **[Stock Symbol]**:
-  - ⚡ 當沖/短線動能: (Keep/Cut/Trim - based on short-term momentum)
-  - 📈 波段趨勢: (Keep/Cut/Trim - based on medium-term trend)
-  - 💎 長線價值: (Keep/Cut/Trim - based on long-term fundamentals)
-## 🔄 組合優化建議 (Optimization Plan)
-- (Identify the 1-2 absolute weakest stocks to sell immediately)
-- (Identify the 1-2 strongest stocks to add to)
+  - 短線(波段): (留/砍/減碼 + 白話理由)
+  - 長線(存股): (留/砍/換股 + 白話理由)
+## 🔄 這樣做會更好 (優化建議)
+- 最該賣掉的 1 支股票
+- 表現最好可以加碼的股票
 """
     return call_ai(api_key, prompt, use_search=True)
 
 def ai_entry_critique(sym, co, buy_price, buy_date, ind_at_buy, current_price, api_key) -> str:
-    prompt = f"""You are a ruthless Trading Coach conducting a post-mortem analysis of a trade.
+    prompt = f"""You are a Trading Coach conducting a post-mortem analysis of a trade.
 Trade: {co} ({sym}) bought at {buy_price} on {buy_date}. Current price: {current_price}. Indicators at buy: {ind_at_buy}.
 
-[RULES]
-- Output entirely in Traditional Chinese (zh-TW).
+[TONE REQUIREMENT]: MUST write for a beginner. Use plain, everyday Traditional Chinese (zh-TW). Avoid jargon.
 
-[OUTPUT FORMAT (Strictly use these exact markdown headers)]
-## 🔬 買點覆盤診斷 (Entry Diagnostic)
-- (Evaluate if the entry was technically sound, too early, or a severe mistake)
-## 🎯 多週期處置建議 (Multi-Timeframe Action Plan)
-- **⚡ 短線/波段交易者**: (A. Hold / B. Trail Stop / C. Stop Loss) + Specific condition
-- **💎 長線投資者**: (Add / Hold / Rotate) + Justification
-## 🧠 心理偏誤提醒 (Psychological Biases)
-- (Identify any behavioral flaws like FOMO, disposition effect, etc., observed in this trade)
+[OUTPUT FORMAT]
+## 🔬 買點健檢 (幫你抓蟲)
+- (Explain simply if they bought at a good time or chased a high price)
+## 🎯 現在該怎麼辦？
+- **短線玩家**: (繼續抱 / 設停損 / 快跑) + 白話理由
+- **長線存股**: (加碼 / 續抱 / 換股) + 白話理由
+## 🧠 小心被心理學騙了
+- (Point out common beginner mistakes like FOMO or holding losers too long in simple terms)
 """
     return call_ai(api_key, prompt, use_search=False)
 
 def ai_bias_warning(bias_data: dict, trades_summary: str, api_key: str) -> str:
     disposition = bias_data.get("disposition_effect", False)
-    prompt = f"""You are a Behavioral Finance Expert. Diagnose trading biases from the following user statistics.
-Win rate: {bias_data.get('win_rate',0)}%, Disposition effect detected: {'Yes' if disposition else 'No'}.
-Recent trades: {trades_summary}.
+    prompt = f"""You are a Behavioral Finance Expert. Diagnose trading biases.
+Win rate: {bias_data.get('win_rate',0)}%, Disposition effect: {'Yes' if disposition else 'No'}. Recent trades: {trades_summary}.
 
-[RULES]
-- Output entirely in Traditional Chinese (zh-TW).
+[TONE REQUIREMENT]: MUST write for a beginner. Use plain, everyday Traditional Chinese (zh-TW). Avoid jargon.
 
-[OUTPUT FORMAT (Strictly use these exact markdown headers)]
-## 🧠 行為偏誤診斷報告 (Behavioral Diagnostic)
-- (Explain the top 3 psychological biases observed from the data)
-## 💊 矯正方案 (Correction Plan)
-- **⚡ 針對短線/波段**: (Specific discipline rules to implement)
-- **💎 針對長線持有**: (Mindset adjustments for long-term compounding)
+[OUTPUT FORMAT]
+## 🧠 你的投資壞習慣診斷
+- (Explain top 3 mistakes using everyday analogies. If disposition effect is true, explain why holding losers is bad.)
+## 💊 幫你開處方籤
+- **給愛做短線的你**: (Simple rules like "Cut losses at 5%")
+- **給想存長線的你**: (Mindset tips for patience)
 """
     return call_ai(api_key, prompt, use_search=False)
 
@@ -1138,7 +1111,6 @@ with st.sidebar:
     st.divider()
     st.header("🌍 宏觀制度設定")
     
-    # 💡 修正 1: 全自動偵測宏觀制度 (系統啟動時若為未知且有 API Key，則自動執行一次)
     current_regime = st.session_state.macro_regime
     if current_regime not in MACRO_REGIMES:
         current_regime = MACRO_REGIMES[0]
@@ -1203,8 +1175,8 @@ with st.sidebar:
 # ══════════════════════════════════════════════
 # 12. 主頁面 (戰情室)
 # ══════════════════════════════════════════════
-st.title("📈 股市小白分析系統 Pro V5.1")
-st.caption("自動宏觀偵測 × 全週期整合(當沖/波段/長線) × 資金控管模組 × 🔴紅漲🟢跌")
+st.title("📈 股市小白分析系統 Pro V5.2")
+st.caption("防封鎖序列AI × 絕對新手白話文版 × 資金控管模組 × 🔴紅漲🟢跌")
 
 mkt = fetch_market_overview()
 if mkt:
@@ -1224,7 +1196,7 @@ if st.session_state.recent_searches:
 
 regime_colors={"成長擴張(Risk-On)":"#cc2222","復甦反彈(Early Cycle)":"#aa3333","通膨衰退(Stagflation)":"#446644","衰退(Risk-Off)":"#228844","流動性危機":"#4422aa","未知":"#444444"}
 rc=regime_colors.get(macro_regime,"#444444")
-st.markdown(f'<div style="background:{rc};border-radius:8px;padding:8px 16px;margin:6px 0;text-align:center"><span style="color:white;font-weight:bold">🌍 當前宏觀制度: {macro_regime}</span></div>',unsafe_allow_html=True)
+st.markdown(f'<div style="background:{rc};border-radius:8px;padding:8px 16px;margin:6px 0;text-align:center"><span style="color:white;font-weight:bold">🌍 當前宏觀大環境: {macro_regime}</span></div>',unsafe_allow_html=True)
 st.divider()
 
 TABS = st.tabs(["📊 個股戰情室","💼 我的資產庫","📊 選股+回測","🗺️ 市場總覽","🧠 交易心理診斷"])
@@ -1289,7 +1261,7 @@ with TABS[0]:
             else: 
                 st.success("⭐ 追蹤中")
 
-        st.markdown(f"**🏢 基本面速覽:** 總市值 `{fmt_large(info.get('marketCap','N/A'))}` | 預估本益比(Fwd PE) `{info.get('forwardPE','N/A')}` | 殖利率 `{info.get('dividendYield','N/A')}`")
+        st.markdown(f"**🏢 公司基本面:** 總市值 `{fmt_large(info.get('marketCap','N/A'))}` | 預估本益比 `{info.get('forwardPE','N/A')}` | 殖利率 `{info.get('dividendYield','N/A')}`")
 
         score_col, kpi_col = st.columns([1,2])
         with score_col:
@@ -1304,50 +1276,49 @@ with TABS[0]:
 
         st.divider()
 
-        # 💡 修正 2: 徹底刪除舊的 st.table，只保留設計好的高級資訊卡片
         st.markdown("### ⏱️ 多週期技術面評估")
         c_dt, c_st, c_lt = st.columns(3)
         with c_dt:
             st.markdown(f"""
             <div style="background:#1e1e2e;padding:16px;border-radius:12px;border:1px solid #3a3a5e;border-top:4px solid #f59e0b;height:100%;">
-                <h4 style="margin-top:0;color:#f59e0b;">⚡ 當沖 (日內)</h4>
-                <div style="font-size:12px;color:#64748b;margin-bottom:8px;">關注: VWAP, 日內波幅, 爆量</div>
+                <h4 style="margin-top:0;color:#f59e0b;">⚡ 當沖 (看今天)</h4>
+                <div style="font-size:12px;color:#64748b;margin-bottom:8px;">關注: 有沒有爆量、有沒有踩穩均價</div>
                 <div style="font-size:15px;color:#e2e8f0;font-weight:bold;margin-bottom:12px;">{ind['dt_status']}</div>
-                <div style="font-size:13px;color:#94a3b8;">進場: <span style="color:#66cc66">{entry['agg_buy']}</span> | 防守: <span style="color:#ff6666">{entry['sl_tight']}</span></div>
+                <div style="font-size:13px;color:#94a3b8;">建議買點: <span style="color:#66cc66">{entry['agg_buy']}</span> | 快跑點: <span style="color:#ff6666">{entry['sl_tight']}</span></div>
             </div>""", unsafe_allow_html=True)
         with c_st:
             st.markdown(f"""
             <div style="background:#1e1e2e;padding:16px;border-radius:12px;border:1px solid #3a3a5e;border-top:4px solid #3b82f6;height:100%;">
-                <h4 style="margin-top:0;color:#3b82f6;">📈 短線 (波段)</h4>
-                <div style="font-size:12px;color:#64748b;margin-bottom:8px;">關注: MA5/MA20, RSI, MACD</div>
+                <h4 style="margin-top:0;color:#3b82f6;">📈 波段 (抱幾週)</h4>
+                <div style="font-size:12px;color:#64748b;margin-bottom:8px;">關注: 短期趨勢有沒有往上走</div>
                 <div style="font-size:15px;color:#e2e8f0;font-weight:bold;margin-bottom:12px;">{ind['st_status']}</div>
-                <div style="font-size:13px;color:#94a3b8;">進場: <span style="color:#66cc66">{entry['mod_buy']}</span> | 防守: <span style="color:#ff6666">{entry['sl_normal']}</span></div>
+                <div style="font-size:13px;color:#94a3b8;">建議買點: <span style="color:#66cc66">{entry['mod_buy']}</span> | 防守點: <span style="color:#ff6666">{entry['sl_normal']}</span></div>
             </div>""", unsafe_allow_html=True)
         with c_lt:
             st.markdown(f"""
             <div style="background:#1e1e2e;padding:16px;border-radius:12px;border:1px solid #3a3a5e;border-top:4px solid #8b5cf6;height:100%;">
-                <h4 style="margin-top:0;color:#8b5cf6;">💎 長線 (存股)</h4>
-                <div style="font-size:12px;color:#64748b;margin-bottom:8px;">關注: 季線(MA60), 位階, 均值回歸</div>
+                <h4 style="margin-top:0;color:#8b5cf6;">💎 長線 (存很久)</h4>
+                <div style="font-size:12px;color:#64748b;margin-bottom:8px;">關注: 長期大趨勢是不是健康的</div>
                 <div style="font-size:15px;color:#e2e8f0;font-weight:bold;margin-bottom:12px;">{ind['lt_status']}</div>
-                <div style="font-size:13px;color:#94a3b8;">進場: <span style="color:#66cc66">{entry['con_buy']}</span> | 防守: <span style="color:#ff6666">{entry['sl_wide']}</span></div>
+                <div style="font-size:13px;color:#94a3b8;">便宜買點: <span style="color:#66cc66">{entry['con_buy']}</span> | 放棄點: <span style="color:#ff6666">{entry['sl_wide']}</span></div>
             </div>""", unsafe_allow_html=True)
 
         st.write("")
 
-        with st.expander("💰 詳細區間目標價與部位計算", expanded=False):
+        with st.expander("💰 詳細操作策略與部位計算", expanded=False):
             e1,e2,e3 = st.columns(3)
             with e1: 
-                st.markdown(f'<div class="entry-card"><div style="color:#66cc66;font-weight:bold">🎯 買入區</div><div style="margin:8px 0;color:#e2e8f0;line-height:2">長線建倉: <b>{entry["con_buy"]}</b><br>短線波段: <b>{entry["mod_buy"]}</b><br>當沖突破: <b>{entry["agg_buy"]}</b></div></div>',unsafe_allow_html=True)
+                st.markdown(f'<div class="entry-card"><div style="color:#66cc66;font-weight:bold">🎯 買入區</div><div style="margin:8px 0;color:#e2e8f0;line-height:2">長線建倉: <b>{entry["con_buy"]}</b><br>波段進場: <b>{entry["mod_buy"]}</b><br>當沖買入: <b>{entry["agg_buy"]}</b></div></div>',unsafe_allow_html=True)
             with e2: 
-                st.markdown(f'<div class="stop-card"><div style="color:#ff6666;font-weight:bold">🛡️ 停損區</div><div style="margin:8px 0;color:#e2e8f0;line-height:2">當沖極短: <b>{entry["sl_tight"]}</b><br>波段標準: <b>{entry["sl_normal"]}</b><br>長線寬幅: <b>{entry["sl_wide"]}</b></div></div>',unsafe_allow_html=True)
+                st.markdown(f'<div class="stop-card"><div style="color:#ff6666;font-weight:bold">🛡️ 停損區 (保命用)</div><div style="margin:8px 0;color:#e2e8f0;line-height:2">當沖快跑: <b>{entry["sl_tight"]}</b><br>波段防守: <b>{entry["sl_normal"]}</b><br>長線底線: <b>{entry["sl_wide"]}</b></div></div>',unsafe_allow_html=True)
             with e3: 
-                st.markdown(f'<div class="target-card"><div style="color:#66aaff;font-weight:bold">🎯 目標價</div><div style="margin:8px 0;color:#e2e8f0;line-height:2">T1(短): <b>{entry["tp1"]}</b><br>T2(中): <b>{entry["tp2"]}</b><br>T3(壓力): <b>{entry["tp3"]}</b></div></div>',unsafe_allow_html=True)
+                st.markdown(f'<div class="target-card"><div style="color:#66aaff;font-weight:bold">🎯 停利區 (賺夠就跑)</div><div style="margin:8px 0;color:#e2e8f0;line-height:2">短期目標: <b>{entry["tp1"]}</b><br>中期目標: <b>{entry["tp2"]}</b><br>最終目標: <b>{entry["tp3"]}</b></div></div>',unsafe_allow_html=True)
             
-            st.markdown("#### ⚖️ 部位規模資金控管 (波段策略)")
+            st.markdown("#### ⚖️ 部位規模資金控管 (計算該買幾股)")
             st.caption("根據您的總資金與能承受的單筆虧損，計算最安全的買入股數。")
             ps1, ps2, ps3 = st.columns(3)
             capital_in = ps1.number_input("您的總資金 (元)", value=100000, step=10000)
-            risk_in = ps2.number_input("單筆交易願承受風險 (%)", value=2.0, step=0.5, help="機構級建議不超過 2%")
+            risk_in = ps2.number_input("單筆交易願承受風險 (%)", value=2.0, step=0.5, help="不超過 2% 比較安全")
             
             risk_amt = capital_in * (risk_in / 100)
             risk_per_share = max(entry['mod_buy'] - entry['sl_normal'], 0.01)
@@ -1363,7 +1334,6 @@ with TABS[0]:
         show_mc = st.checkbox("🎲 開啟蒙地卡羅30日模擬")
         mc_data = monte_carlo_simulation(hist) if show_mc else None
 
-        # 💡 修正 3: 修復 dict object 抓取報錯
         buy_markers = []
         if sym in st.session_state.portfolio:
             entries = st.session_state.portfolio[sym]
@@ -1387,14 +1357,14 @@ with TABS[0]:
         st.markdown("### [AI] 多週期三方辯論分析")
         if not api_key: 
             st.warning("⚠️ 請先於左側輸入 Gemini API 金鑰啟用 AI 分析。")
-        elif st.button("⚔️ 啟動三方並行辯論(約30秒)",type="primary"):
-            with st.spinner("AI 並行推理中 (輸出將轉為繁體中文)..."):
+        elif st.button("⚔️ 啟動三方辯論 (約需 60~90 秒，依序執行防封鎖)",type="primary"):
+            with st.spinner("AI 代理人撰寫白話文報告中 (為避免被 Google 封鎖，我們一位一位來)..."):
                 try:
                     bull_rpt,bear_rpt,judge_rpt = ai_three_agent_debate(ind,info,sym,api_key,entry,score,macro_regime)
-                    debate_tab1,debate_tab2,debate_tab3 = st.tabs(["🔴 多頭論點","🟢 空頭論點","🟣 CIO最終裁決"])
+                    debate_tab1,debate_tab2,debate_tab3 = st.tabs(["🔴 多頭看漲原因","🟢 空頭看跌原因","🟣 裁判最終判定"])
                     
                     with debate_tab1:
-                        st.markdown('<div class="bull-card"><b>🔴 多頭代理人(Permabull Agent)</b></div>',unsafe_allow_html=True)
+                        st.markdown('<div class="bull-card"><b>🔴 多頭代理人 (負責找買入理由)</b></div>',unsafe_allow_html=True)
                         secs = bull_rpt.split("\n## ")
                         st.markdown(secs[0])
                         for sec in secs[1:]:
@@ -1403,7 +1373,7 @@ with TABS[0]:
                                 st.markdown(lines[1] if len(lines)>1 else "")
 
                     with debate_tab2:
-                        st.markdown('<div class="bear-card"><b>🟢 空頭代理人(Ruthless Bear Agent)</b></div>',unsafe_allow_html=True)
+                        st.markdown('<div class="bear-card"><b>🟢 空頭代理人 (負責找潛在風險)</b></div>',unsafe_allow_html=True)
                         secs = bear_rpt.split("\n## ")
                         st.markdown(secs[0])
                         for sec in secs[1:]:
@@ -1412,12 +1382,12 @@ with TABS[0]:
                                 st.markdown(lines[1] if len(lines)>1 else "")
 
                     with debate_tab3:
-                        st.markdown('<div class="judge-card"><b>🟣 CIO最終裁決</b></div>',unsafe_allow_html=True)
+                        st.markdown('<div class="judge-card"><b>🟣 投資裁判 (總結給你看)</b></div>',unsafe_allow_html=True)
                         secs = judge_rpt.split("\n## ")
                         st.markdown(secs[0])
                         for sec in secs[1:]:
                             lines = sec.split("\n",1)
-                            if "裁決" in lines[0] or "預測" in lines[0] or "建議" in lines[0] or "Verdict" in lines[0] or "Plan" in lines[0] or "Key" in lines[0]:
+                            if "判定" in lines[0] or "建議" in lines[0] or "防守" in lines[0] or "真心話" in lines[0]:
                                 st.markdown(f'<div class="predict-card"><div style="color:#c084fc;font-size:14px;font-weight:bold">## {lines[0]}</div></div>',unsafe_allow_html=True)
                                 st.markdown(lines[1] if len(lines)>1 else "")
                             else:
@@ -1478,7 +1448,7 @@ with TABS[1]:
                 mc5.metric("年化",f"{ann:+.1f}%",delta=str(ann),delta_color="inverse")
 
                 if api_key:
-                    if st.button("[AI] 多週期覆盤教練",key="review_btn",type="primary"):
+                    if st.button("[AI] 交易覆盤教練 (幫你抓蟲)",key="review_btn",type="primary"):
                         _h2,_,_=fetch_data(ps_sym,"6mo")
                         if _h2 is not None:
                             try:
@@ -1492,7 +1462,7 @@ with TABS[1]:
                             except: 
                                 ind_at_buy_str = "無數據"
                                 
-                            with st.spinner("AI 英文底層邏輯推理中..."):
+                            with st.spinner("教練撰寫報告中..."):
                                 try:
                                     rev=ai_entry_critique(ps_sym,ps_sym,pc_,str(pd_),ind_at_buy_str,cp_,api_key)
                                     secs=rev.split("\n## ")
@@ -1568,9 +1538,9 @@ with TABS[1]:
                 st.metric("📊 組合總損益", f"{tp:+,.0f}元", delta=f"{tpct:+.2f}%", delta_color="inverse")
                 
                 if api_key:
-                    if st.button("🏦 AI 投資長多週期審查", type="primary"):
+                    if st.button("🏦 AI 投資長健檢你的股票池", type="primary"):
                         port_str = "\n".join([f"- {r['代號']}: 成本{r['均價']} 現價{r['現價']} 損益{r['損益%']}" for r in pr_rows])
-                        with st.spinner("AI 英文底層邏輯推理中 (嚴苛汰弱留強)..."):
+                        with st.spinner("AI 投資長查帳中..."):
                             try:
                                 cio_rpt = ai_portfolio_cio(port_str, str(sector_map), api_key)
                                 secs = cio_rpt.split("\n## ")
@@ -1772,8 +1742,8 @@ with TABS[4]:
             if bias["disposition_effect"]: 
                 st.error("🚨 偵測到處置效應 (持有虧損股時間顯著長於獲利股)！請嚴格執行停損。")
             
-            if api_key and st.button("🧠 AI 深度行為偏誤診斷",type="primary"):
-                with st.spinner("AI 英文底層邏輯推理中..."):
+            if api_key and st.button("🧠 AI 幫你抓投資壞習慣",type="primary"):
+                with st.spinner("教練評估中..."):
                     try:
                         bias_rpt = ai_bias_warning(bias, "\n".join([f"- {t.get('symbol','')}: 損益{t.get('pnl_pct',0):+.1f}%" for t in trades[:10]]), api_key)
                         secs = bias_rpt.split("\n## ")
@@ -1786,4 +1756,4 @@ with TABS[4]:
                         st.error(str(e)[:80])
 
 st.divider()
-st.caption("📈 股市小白分析系統 Pro V5.1 | 🔴紅漲🟢跌 | ⚠️ 內容僅供學習參考，不構成投資建議")
+st.caption("📈 股市小白分析系統 Pro V5.2 | 🔴紅漲🟢跌 | ⚠️ 內容僅供學習參考，不構成投資建議")
