@@ -1,5 +1,5 @@
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║  股市小白分析系統 Pro  V7.3  ─  富果API整合版 (含盤中即時報價)      ║
+# ║  股市小白分析系統 Pro  V7.4  ─  富果API解碼修正版 (徹底修復渲染)  ║
 # ║  Taiwan Color: RED=漲  GREEN=跌  |  當沖/短線/長線 三維度決策整合   ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 import streamlit as st
@@ -17,7 +17,6 @@ import base64
 import json
 import os
 import requests
-import textwrap
 from datetime import datetime, date, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from cryptography.fernet import Fernet
@@ -33,14 +32,19 @@ except ImportError:
 TW_TZ = timezone(timedelta(hours=8))
 
 # ══════════════════════════════════════════════
-# 0. 全域常數與 API 金鑰設定
+# 0. 全域常數與 API 金鑰設定 (自動 Base64 解碼)
 # ══════════════════════════════════════════════
-FUGLE_API_KEY = "ZWU4MDYwOTYtM2M0NC00YWNhLTkwYjMtOGEyMzYzOWE5NDQ0IGExOTkzODI1LWZhZjQtNGE1My1hYzNjLWY1MzEwMTEzNGFiYQ=="
+_RAW_FUGLE = "ZWU4MDYwOTYtM2M0NC00YWNhLTkwYjMtOGEyMzYzOWE5NDQ0IGExOTkzODI1LWZhZjQtNGE1My1hYzNjLWY1MzEwMTEzNGFiYQ=="
+try:
+    _decoded = base64.b64decode(_RAW_FUGLE).decode('utf-8').split()
+    FUGLE_API_KEY = _decoded[-1] # 取出真實的 UUID 金鑰
+except:
+    FUGLE_API_KEY = _RAW_FUGLE
 
 # ══════════════════════════════════════════════
 # 1. 頁面設定與 CSS
 # ══════════════════════════════════════════════
-st.set_page_config(page_title="股市小白分析系統 Pro V7.3", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="股市小白分析系統 Pro V7.4", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -285,6 +289,8 @@ def fetch_data(symbol: str, period: str):
                         except: pass
                         
                         return df, info, None
+            elif resp.status_code == 401:
+                print(f"[{tw_sym}] Fugle API 認證失敗，可能金鑰失效。")
         except Exception as e:
             err_msg += f"Fugle API 失效: {str(e)[:50]} | "
 
@@ -893,7 +899,7 @@ with st.sidebar:
 # ══════════════════════════════════════════════
 # 12. 主頁面 (戰情室)
 # ══════════════════════════════════════════════
-st.title("📈 股市小白分析系統 Pro V7.3")
+st.title("📈 股市小白分析系統 Pro V7.4")
 st.caption("富果 Fugle 即時串接 × FinMind 上櫃備援 × 高級動態排行榜")
 
 mkt = fetch_market_overview()
@@ -1025,7 +1031,7 @@ with TABS[0]:
                     with debate_tab3: st.markdown(judge_rpt)
 
 # ==========================================
-# 分頁 2: AI 評分排行榜 (修復渲染亂碼)
+# 分頁 2: AI 評分排行榜 (徹底修復渲染亂碼)
 # ==========================================
 with TABS[1]:
     st.markdown("""
@@ -1070,35 +1076,31 @@ with TABS[1]:
             for idx, item in enumerate(cat_data):
                 medal = "🥇" if idx == 0 else "🥈" if idx == 1 else "🥉" if idx == 2 else f'<span style="color:#64748b;font-size:18px;">{idx+1}</span>'
                 
-                # 使用 textwrap.dedent 確保 HTML 標籤無多餘縮排，防止 Markdown 將其誤認為程式碼區塊
-                html_content = textwrap.dedent(f"""
-                <div class="lb-card">
-                    <div class="lb-header">
-                        <div class="lb-title">
-                            {medal} {item.get('sym','')} {item.get('name','')} 
-                            <span class="lb-status">📈 {item.get('status','')}</span>
-                        </div>
-                        <div class="lb-score-container">
-                            <div class="lb-score">{item.get('score',0)}</div>
-                            <div class="lb-score-sub">/ 100</div>
-                        </div>
-                    </div>
-                    
-                    <div class="lb-bars">
-                        <div>
-                            <div class="bar-row"><span>當沖爆發力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item.get('dt_score',0)}%;"></div></div> <span>{item.get('dt_score',0)}</span></div>
-                            <div class="bar-row"><span>短線波段力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item.get('st_score',0)}%;"></div></div> <span>{item.get('st_score',0)}</span></div>
-                        </div>
-                        <div>
-                            <div class="bar-row"><span>長線存股力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item.get('lt_score',0)}%;"></div></div> <span>{item.get('lt_score',0)}</span></div>
-                        </div>
-                    </div>
-                    
-                    <div class="lb-reason">
-                        💡 <b>入榜主要原因：</b> {item.get('reason','')} <span style="float:right;font-size:11px;color:#64748b;">更新時間：{item.get('update_time','')}</span>
-                    </div>
-                </div>
-                """)
+                # 警告：此處字串絕對不可有任何「行首空白(Indentation)」，否則 Streamlit 會將其誤判為純文字代碼區塊！
+                html_content = f"""<div class="lb-card">
+<div class="lb-header">
+<div class="lb-title">
+{medal} {item.get('sym','')} {item.get('name','')} 
+<span class="lb-status">📈 {item.get('status','')}</span>
+</div>
+<div class="lb-score-container">
+<div class="lb-score">{item.get('score',0)}</div>
+<div class="lb-score-sub">/ 100</div>
+</div>
+</div>
+<div class="lb-bars">
+<div>
+<div class="bar-row"><span>當沖爆發力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item.get('dt_score',0)}%;"></div></div> <span>{item.get('dt_score',0)}</span></div>
+<div class="bar-row"><span>短線波段力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item.get('st_score',0)}%;"></div></div> <span>{item.get('st_score',0)}</span></div>
+</div>
+<div>
+<div class="bar-row"><span>長線存股力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item.get('lt_score',0)}%;"></div></div> <span>{item.get('lt_score',0)}</span></div>
+</div>
+</div>
+<div class="lb-reason">
+💡 <b>入榜主要原因：</b> {item.get('reason','')} <span style="float:right;font-size:11px;color:#64748b;">更新時間：{item.get('update_time','')}</span>
+</div>
+</div>"""
                 st.markdown(html_content, unsafe_allow_html=True)
     else:
         st.warning("⚠️ 尚未建立排行榜資料庫 (leaderboard.json)！請先在終端機執行 `python background_worker.py`。")
@@ -1327,4 +1329,4 @@ with TABS[6]:
                     st.markdown(bias_rpt)
 
 st.divider()
-st.caption("📈 股市小白分析系統 Pro V7.3 | 完全自用無限制版")
+st.caption("📈 股市小白分析系統 Pro V7.4 | 完全自用無限制版")

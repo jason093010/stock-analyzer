@@ -61,7 +61,7 @@ def analyze_asset(sym, name, category):
 
 def generate_leaderboard():
     print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 開始執行全市場分類掃描...")
-    if FUGLE_API_KEY:
+    if FUGLE_API_KEY and FUGLE_API_KEY != "":
         print("🟢 已啟用 富果 (Fugle) API 模式")
         
     all_results = {"個股": [], "被動式ETF": [], "主動式ETF": []}
