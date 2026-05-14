@@ -6,33 +6,40 @@ from app import fetch_data, calc_indicators
 
 TW_TZ = timezone(timedelta(hours=8))
 
-# 建立觀測池 (實務上可透過爬蟲取得全市場名單，此處以代表性清單示範)
+# 建立觀測池：直接綁定中文名稱，避免 yfinance 吐出英文
 UNIVERSE = {
-    "個股": ["2330.TW", "2317.TW", "2454.TW", "2382.TW", "2308.TW", "2603.TW", "3231.TW", "2356.TW", "2327.TW", "2492.TW"],
-    "被動式ETF": ["0050.TW", "0056.TW", "00878.TW", "00929.TW", "006208.TW", "00713.TW", "00679B.TW"],
-    "主動式ETF": ["00928.TW", "00933B.TW", "00915.TW"] # 台灣多為 Smart Beta，暫列此區
+    "個股": {
+        "2330.TW": "台積電", "2317.TW": "鴻海", "2454.TW": "聯發科", 
+        "2382.TW": "廣達", "2308.TW": "台達電", "2603.TW": "長榮", 
+        "3231.TW": "緯創", "2356.TW": "英業達", "2327.TW": "國巨", 
+        "2492.TW": "華新科"
+    },
+    "被動式ETF": {
+        "0050.TW": "元大台灣50", "0056.TW": "元大高股息", "00878.TW": "國泰永續高息", 
+        "00929.TW": "復華台灣科技優息", "006208.TW": "富邦台50", 
+        "00713.TW": "元大台灣高息低波", "00679B.TWO": "元大美債20年"
+    },
+    "主動式ETF": {
+        "00928.TWO": "中信上櫃ESG30", "00933B.TW": "國泰10Y+金融債", 
+        "00915.TW": "凱基優選高股息30"
+    }
 }
 
-def analyze_asset(sym, category):
+def analyze_asset(sym, name, category):
     h, info, err = fetch_data(sym, "6mo")
-    if err or h is None or h.empty: return None
+    if err or h is None or h.empty: 
+        print(f"  [跳過] {sym} 數據抓取失敗: {err}")
+        return None
     
     ind = calc_indicators(h)
     
     # 維度獨立評分 (滿分各 100)
-    # 當沖 (Day Trade): 著重爆發量能、VWAP、日內動能與布林通道寬度
     dt_score = min(100, int((ind["vol_ratio"] / 2.5 * 40) + (20 if ind["price"] > ind["vwap"] else 0) + (ind["rsi"] * 0.4)))
-    
-    # 短線 (Short Term): 著重 MA5/MA20 趨勢、MACD 動能、RSI
     st_score = min(100, int((30 if ind["ma5"] > ind["ma20"] else 0) + (30 if ind["macd_hist"] > 0 else 0) + (ind["stoch_k"] * 0.4)))
-    
-    # 長線 (Long Term): 著重 MA60 季線支撐、位階、乖離率
     lt_score = min(100, int((40 if ind["price"] > ind["ma60"] else 0) + (30 if 30 <= ind["position_52w"] <= 70 else 10) + (30 if ind["ma20"] > ind["ma60"] else 0)))
     
-    # 綜合評分 (依權重)
     total_score = round(dt_score * 0.2 + st_score * 0.4 + lt_score * 0.4, 1)
     
-    # 產生簡易評分原因
     reason = []
     if dt_score > 75: reason.append(f"量能放大({ind['vol_ratio']:.1f}x)")
     if st_score > 75: reason.append("短線均線多頭")
@@ -40,8 +47,8 @@ def analyze_asset(sym, category):
     if not reason: reason.append("震盪盤整中")
 
     return {
-        "sym": sym.replace(".TW", ""),
-        "name": info.get("longName", sym.replace(".TW", "")),
+        "sym": sym.replace(".TW", "").replace(".TWO", ""),
+        "name": name,
         "category": category,
         "score": total_score,
         "dt_score": dt_score,
@@ -56,14 +63,13 @@ def generate_leaderboard():
     print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 開始執行全市場分類掃描...")
     all_results = {"個股": [], "被動式ETF": [], "主動式ETF": []}
     
-    for category, symbols in UNIVERSE.items():
+    for category, symbols_dict in UNIVERSE.items():
         print(f"掃描 {category}...")
-        for sym in symbols:
-            res = analyze_asset(sym, category)
+        for sym, name in symbols_dict.items():
+            res = analyze_asset(sym, name, category)
             if res: all_results[category].append(res)
-            time.sleep(1) # 遵守速率限制
+            time.sleep(2) # 遵守速率限制
             
-    # 取各分類 Top 10
     final_lb = {}
     for cat, items in all_results.items():
         final_lb[cat] = sorted(items, key=lambda x: x["score"], reverse=True)[:10]
@@ -75,4 +81,4 @@ def generate_leaderboard():
 if __name__ == "__main__":
     while True:
         generate_leaderboard()
-        time.sleep(3600) # 每 1 小時更新一次
+        time.sleep(10800) # 每 3 小時更新一次

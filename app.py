@@ -1,5 +1,5 @@
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║  股市小白分析系統 Pro  V7.2  ─  大滿配終極版 (含多分類防呆排行榜)   ║
+# ║  股市小白分析系統 Pro  V7.2  ─  大滿配終極版 (修復亂碼與上櫃備援)   ║
 # ║  Taiwan Color: RED=漲  GREEN=跌  |  當沖/短線/長線 三維度決策整合   ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 import streamlit as st
@@ -248,7 +248,8 @@ MACRO_REGIMES = ["未知","成長擴張(Risk-On)","通膨衰退(Stagflation)","�
 
 def get_sym(raw: str, market: str) -> str:
     raw = raw.strip().upper()
-    if "台股" in market and not raw.endswith(".TW"): return raw + ".TW"
+    if "台股" in market and not raw.endswith(".TW") and not raw.endswith(".TWO"): 
+        return raw + ".TW"
     return raw
 
 def safe_f(val, default=0.0) -> float:
@@ -269,7 +270,7 @@ def fmt_large(v):
     return f"{v:,.2f}"
 
 # ══════════════════════════════════════════════
-# 5. 數據抓取模組 (FinMind 備援)
+# 5. 數據抓取模組 (FinMind 備援強化)
 # ══════════════════════════════════════════════
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_data(symbol: str, period: str):
@@ -303,14 +304,15 @@ def fetch_data(symbol: str, period: str):
     except Exception as e:
         err_msg = str(e)
 
-    if symbol.endswith(".TW"):
+    # 針對台股與上櫃 ETF (.TWO) 自動啟用 FinMind 備援
+    if symbol.endswith(".TW") or symbol.endswith(".TWO"):
         try:
             from FinMind.data import DataLoader
             dl = DataLoader()
             days_map = {"3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
             days = days_map.get(period, 180)
             start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-            tw_sym = symbol.replace(".TW", "")
+            tw_sym = symbol.replace(".TW", "").replace(".TWO", "")
             fm_data = dl.taiwan_stock_daily(stock_id=tw_sym, start_date=start_date)
             if not fm_data.empty:
                 fm_data = fm_data.rename(columns={"date": "Date", "open": "Open", "max": "High", "min": "Low", "close": "Close", "Trading_Volume": "Volume"})
@@ -914,7 +916,7 @@ with st.sidebar:
 # 12. 主頁面 (戰情室)
 # ══════════════════════════════════════════════
 st.title("📈 股市小白分析系統 Pro V7.2")
-st.caption("完整無刪減版 × FinMind 備援 × 高級動態排行榜")
+st.caption("完整無刪減版 × FinMind 上櫃備援 × 高級動態排行榜")
 
 mkt = fetch_market_overview()
 if mkt:
@@ -928,7 +930,7 @@ if st.session_state.recent_searches:
     rc=st.columns(min(len(st.session_state.recent_searches),8))
     for i,rs in enumerate(st.session_state.recent_searches):
         if rc[i].button(rs,key=f"rc_{i}"): 
-            st.session_state.quick_sym=rs.replace(".TW","")
+            st.session_state.quick_sym=rs.replace(".TW","").replace(".TWO","")
             st.session_state.auto_analyze=True
             st.rerun()
 
@@ -1069,7 +1071,7 @@ with TABS[1]:
     st.markdown("### 🏆 AI 綜合評分排行榜 (Top 10)")
     st.caption("🚀 整合技術面、量能與動能之全自動分類排行，為新手過濾市場雜訊。")
     
-    lb_cat = st.radio("選擇分類", ["個股", "被動式ETF", "主 মাস্টারETF"], horizontal=True)
+    lb_cat = st.radio("選擇分類", ["個股", "被動式ETF", "主動式ETF"], horizontal=True)
     
     if os.path.exists("leaderboard.json"):
         try:
@@ -1078,12 +1080,12 @@ with TABS[1]:
         except Exception:
             full_lb_data = {}
             
-        # [防呆機制 Type Check] 確保讀到的是字典而非舊版清單
+        # 防呆機制：確保讀到的是字典而非舊版清單
         if isinstance(full_lb_data, dict):
             cat_data = full_lb_data.get(lb_cat, [])
         else:
             cat_data = []
-            st.warning("⚠️ 偵測到舊版排行榜格式 (List)。請確認背景是否已執行最新版的 `background_worker.py` 來覆蓋資料庫。")
+            st.warning("⚠️ 偵測到舊版排行榜格式。請在終端機執行 `python background_worker.py` 來更新資料庫。")
         
         if not cat_data and isinstance(full_lb_data, dict):
             st.info(f"尚無 {lb_cat} 的排行資料，請確認背景程式正在監控此分類。")
@@ -1120,7 +1122,7 @@ with TABS[1]:
                 </div>
                 """, unsafe_allow_html=True)
     else:
-        st.warning("⚠️ 尚未建立排行榜資料庫 (leaderboard.json)！請確認是否已執行 `background_worker.py`。")
+        st.warning("⚠️ 尚未建立排行榜資料庫 (leaderboard.json)！請先在終端機執行 `python background_worker.py`。")
 
 # ==========================================
 # 分頁 3: 雙股 PK

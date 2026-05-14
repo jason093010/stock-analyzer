@@ -2,7 +2,7 @@
     "個股": [
         {
             "sym": "2492",
-            "name": "Walsin Technology Corporation",
+            "name": "華新科",
             "category": "個股",
             "score": 87.4,
             "dt_score": 77,
@@ -10,11 +10,11 @@
             "lt_score": 80,
             "status": "強勢多頭 📈",
             "reason": "量能放大(1.4x) | 短線均線多頭 | 站穩季線支撐",
-            "update_time": "05/14 20:02"
+            "update_time": "05/14 20:23"
         },
         {
             "sym": "2327",
-            "name": "Yageo Corporation",
+            "name": "國巨",
             "category": "個股",
             "score": 84.4,
             "dt_score": 62,
@@ -22,11 +22,11 @@
             "lt_score": 80,
             "status": "強勢多頭 📈",
             "reason": "短線均線多頭 | 站穩季線支撐",
-            "update_time": "05/14 20:02"
+            "update_time": "05/14 20:23"
         },
         {
             "sym": "2356",
-            "name": "Inventec Corporation",
+            "name": "英業達",
             "category": "個股",
             "score": 81.6,
             "dt_score": 82,
@@ -34,11 +34,11 @@
             "lt_score": 80,
             "status": "強勢多頭 📈",
             "reason": "量能放大(2.1x) | 短線均線多頭 | 站穩季線支撐",
-            "update_time": "05/14 20:02"
+            "update_time": "05/14 20:23"
         },
         {
             "sym": "2603",
-            "name": "Evergreen Marine Corporation (Taiwan) Ltd.",
+            "name": "長榮",
             "category": "個股",
             "score": 79.4,
             "dt_score": 61,
@@ -46,11 +46,11 @@
             "lt_score": 80,
             "status": "強勢多頭 📈",
             "reason": "短線均線多頭 | 站穩季線支撐",
-            "update_time": "05/14 20:02"
+            "update_time": "05/14 20:23"
         },
         {
             "sym": "2317",
-            "name": "Hon Hai Precision Industry Co., Ltd.",
+            "name": "鴻海",
             "category": "個股",
             "score": 67.6,
             "dt_score": 58,
@@ -58,11 +58,11 @@
             "lt_score": 80,
             "status": "強勢多頭 📈",
             "reason": "站穩季線支撐",
-            "update_time": "05/14 20:02"
+            "update_time": "05/14 20:23"
         },
         {
             "sym": "2454",
-            "name": "MediaTek Inc.",
+            "name": "聯發科",
             "category": "個股",
             "score": 67.6,
             "dt_score": 58,
@@ -70,11 +70,11 @@
             "lt_score": 80,
             "status": "強勢多頭 📈",
             "reason": "站穩季線支撐",
-            "update_time": "05/14 20:02"
+            "update_time": "05/14 20:23"
         },
         {
             "sym": "2382",
-            "name": "Quanta Computer Inc.",
+            "name": "廣達",
             "category": "個股",
             "score": 65.4,
             "dt_score": 61,
@@ -82,11 +82,11 @@
             "lt_score": 80,
             "status": "短線偏多 🔵",
             "reason": "站穩季線支撐",
-            "update_time": "05/14 20:02"
+            "update_time": "05/14 20:23"
         },
         {
             "sym": "3231",
-            "name": "Wistron Corporation",
+            "name": "緯創",
             "category": "個股",
             "score": 59.8,
             "dt_score": 33,
@@ -94,11 +94,11 @@
             "lt_score": 100,
             "status": "盤整蓄勢 ⚪",
             "reason": "站穩季線支撐",
-            "update_time": "05/14 20:02"
+            "update_time": "05/14 20:23"
         },
         {
             "sym": "2330",
-            "name": "Taiwan Semiconductor Manufacturing Company Limited",
+            "name": "台積電",
             "category": "個股",
             "score": 56.2,
             "dt_score": 59,
@@ -106,11 +106,11 @@
             "lt_score": 80,
             "status": "短線偏多 🔵",
             "reason": "站穩季線支撐",
-            "update_time": "05/14 20:02"
+            "update_time": "05/14 20:23"
         },
         {
             "sym": "2308",
-            "name": "Delta Electronics, Inc.",
+            "name": "台達電",
             "category": "個股",
             "score": 55.8,
             "dt_score": 55,
@@ -118,13 +118,13 @@
             "lt_score": 80,
             "status": "短線偏多 🔵",
             "reason": "站穩季線支撐",
-            "update_time": "05/14 20:02"
+            "update_time": "05/14 20:23"
         }
     ],
     "被動式ETF": [
         {
             "sym": "00929",
-            "name": "Fuh Hwa Taiwan Technology Dividend Highlight ETF",
+            "name": "復華台灣科技優息",
             "category": "被動式ETF",
             "score": 85.0,
             "dt_score": 65,
@@ -132,11 +132,11 @@
             "lt_score": 80,
             "status": "強勢多頭 📈",
             "reason": "短線均線多頭 | 站穩季線支撐",
-            "update_time": "05/14 20:02"
+            "update_time": "05/14 20:23"
         },
         {
             "sym": "00713",
-            "name": "Yuanta Taiwan High Dividend Low Volatility ETF",
+            "name": "元大台灣高息低波",
             "category": "被動式ETF",
             "score": 84.4,
             "dt_score": 64,
@@ -144,11 +144,11 @@
             "lt_score": 80,
             "status": "強勢多頭 📈",
             "reason": "短線均線多頭 | 站穩季線支撐",
-            "update_time": "05/14 20:02"
+            "update_time": "05/14 20:24"
         },
         {
             "sym": "0056",
-            "name": "Yuanta/P-shares Taiwan Dividend Plus ETF",
+            "name": "元大高股息",
             "category": "被動式ETF",
             "score": 84.2,
             "dt_score": 61,
@@ -156,11 +156,11 @@
             "lt_score": 80,
             "status": "強勢多頭 📈",
             "reason": "短線均線多頭 | 站穩季線支撐",
-            "update_time": "05/14 20:02"
+            "update_time": "05/14 20:23"
         },
         {
             "sym": "00878",
-            "name": "Cathay Sustainability High Dividend ETF",
+            "name": "國泰永續高息",
             "category": "被動式ETF",
             "score": 84.0,
             "dt_score": 66,
@@ -168,11 +168,11 @@
             "lt_score": 80,
             "status": "強勢多頭 📈",
             "reason": "短線均線多頭 | 站穩季線支撐",
-            "update_time": "05/14 20:02"
+            "update_time": "05/14 20:23"
         },
         {
             "sym": "006208",
-            "name": "Fubon FTSE TWSE Taiwan 50 ETF",
+            "name": "富邦台50",
             "category": "被動式ETF",
             "score": 58.0,
             "dt_score": 68,
@@ -180,11 +180,11 @@
             "lt_score": 80,
             "status": "短線偏多 🔵",
             "reason": "站穩季線支撐",
-            "update_time": "05/14 20:02"
+            "update_time": "05/14 20:23"
         },
         {
             "sym": "0050",
-            "name": "Yuanta/P-shares Taiwan Top 50 ETF",
+            "name": "元大台灣50",
             "category": "被動式ETF",
             "score": 56.2,
             "dt_score": 59,
@@ -192,13 +192,37 @@
             "lt_score": 80,
             "status": "短線偏多 🔵",
             "reason": "站穩季線支撐",
-            "update_time": "05/14 20:02"
+            "update_time": "05/14 20:23"
+        },
+        {
+            "sym": "00679BO",
+            "name": "元大美債20年",
+            "category": "被動式ETF",
+            "score": 12.4,
+            "dt_score": 26,
+            "st_score": 8,
+            "lt_score": 10,
+            "status": "強勢空頭 📉",
+            "reason": "震盪盤整中",
+            "update_time": "05/14 20:24"
         }
     ],
     "主動式ETF": [
         {
+            "sym": "00928O",
+            "name": "中信上櫃ESG30",
+            "category": "主動式ETF",
+            "score": 85.4,
+            "dt_score": 73,
+            "st_score": 97,
+            "lt_score": 80,
+            "status": "強勢多頭 📈",
+            "reason": "短線均線多頭 | 站穩季線支撐",
+            "update_time": "05/14 20:24"
+        },
+        {
             "sym": "00915",
-            "name": "KGI Taiwan Premium Selection High Dividend 30 ETF",
+            "name": "凱基優選高股息30",
             "category": "主動式ETF",
             "score": 85.4,
             "dt_score": 67,
@@ -206,7 +230,7 @@
             "lt_score": 80,
             "status": "強勢多頭 📈",
             "reason": "短線均線多頭 | 站穩季線支撐",
-            "update_time": "05/14 20:02"
+            "update_time": "05/14 20:24"
         }
     ]
 }
