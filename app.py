@@ -1,5 +1,5 @@
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║  股市小白分析系統 Pro  V7.6  ─  極速全市場對接版 (100% 杜絕亂碼)    ║
+# ║  股市小白分析系統 Pro  V7.7  ─  時間戳記完整化與雙重新聞備援      ║
 # ║  Taiwan Color: RED=漲  GREEN=跌  |  當沖/短線/長線 三維度決策整合   ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 import streamlit as st
@@ -17,6 +17,9 @@ import base64
 import json
 import os
 import requests
+import urllib.request
+import urllib.parse
+import xml.etree.ElementTree as ET
 from datetime import datetime, date, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from cryptography.fernet import Fernet
@@ -37,14 +40,14 @@ TW_TZ = timezone(timedelta(hours=8))
 _RAW_FUGLE = "ZWU4MDYwOTYtM2M0NC00YWNhLTkwYjMtOGEyMzYzOWE5NDQ0IGExOTkzODI1LWZhZjQtNGE1My1hYzNjLWY1MzEwMTEzNGFiYQ=="
 try:
     _decoded = base64.b64decode(_RAW_FUGLE).decode('utf-8').split()
-    FUGLE_API_KEY = _decoded[0] # 取出第一個真正的 UUID 金鑰
+    FUGLE_API_KEY = _decoded[0] 
 except:
     FUGLE_API_KEY = _RAW_FUGLE
 
 # ══════════════════════════════════════════════
 # 1. 頁面設定與 CSS
 # ══════════════════════════════════════════════
-st.set_page_config(page_title="股市小白分析系統 Pro V7.6", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="股市小白分析系統 Pro V7.7", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -202,7 +205,7 @@ def add_recent(sym: str):
     st.session_state.recent_searches = r[:8]
 
 # ══════════════════════════════════════════════
-# 5. 數據抓取模組 (富果 Fugle 優先 > FinMind > yfinance)
+# 5. 數據抓取模組
 # ══════════════════════════════════════════════
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_data(symbol: str, period: str):
@@ -210,7 +213,7 @@ def fetch_data(symbol: str, period: str):
     is_tw = symbol.endswith(".TW") or symbol.endswith(".TWO") or symbol.isdigit()
     tw_sym = symbol.replace(".TW", "").replace(".TWO", "")
 
-    # 1. 富果 Fugle API (台股優先，包含歷史 K 線與即時報價)
+    # 1. 富果 Fugle API (台股優先)
     if is_tw and FUGLE_API_KEY:
         try:
             days_map = {"3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
@@ -253,7 +256,7 @@ def fetch_data(symbol: str, period: str):
                                 df.loc[today_dt] = {"Open": o_price, "High": h_price, "Low": l_price, "Close": c_price, "Volume": vol}
                     
                     if not df.empty:
-                        info = {'longName': symbol.replace(".TW", "").replace(".TWO", ""), 'sector': '台股', 'raw_yield': 0.0, 'fetch_time': datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S"), 'source': 'Fugle 富果 (含即時)'}
+                        info = {'longName': symbol.replace(".TW", "").replace(".TWO", ""), 'sector': '台股', 'raw_yield': 0.0, 'fetch_time': datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S"), 'source': 'Fugle 富果 API'}
                         try:
                             ticker_url = f"https://openapi.fugle.tw/marketdata/v1.0/stock/intraday/ticker/{tw_sym}"
                             t_resp = requests.get(ticker_url, headers=headers, timeout=5)
@@ -265,9 +268,9 @@ def fetch_data(symbol: str, period: str):
                         
                         return df, info, None
             elif resp.status_code == 401:
-                print(f"[{tw_sym}] Fugle API 認證失敗，請確認 API Key。")
+                pass
         except Exception as e:
-            err_msg += f"Fugle API 失效: {str(e)[:50]} | "
+            err_msg += f"Fugle: {str(e)[:20]} | "
 
     # 2. FinMind API (台股備援)
     if is_tw:
@@ -281,10 +284,10 @@ def fetch_data(symbol: str, period: str):
                 fm_data = fm_data.rename(columns={"date": "Date", "open": "Open", "max": "High", "min": "Low", "close": "Close", "Trading_Volume": "Volume"})
                 fm_data["Date"] = pd.to_datetime(fm_data["Date"])
                 fm_data = fm_data.set_index("Date")
-                info = {'longName': symbol.replace(".TW", "").replace(".TWO", ""), 'sector': '台股', 'raw_yield': 0.0, 'fetch_time': datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S"), 'source': 'FinMind (備援)'}
+                info = {'longName': symbol.replace(".TW", "").replace(".TWO", ""), 'sector': '台股', 'raw_yield': 0.0, 'fetch_time': datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S"), 'source': 'FinMind API'}
                 return fm_data, info, None
         except Exception as fm_e:
-            err_msg += f"FinMind 失效: {str(fm_e)[:50]} | "
+            err_msg += f"FinMind: {str(fm_e)[:20]} | "
 
     # 3. Yahoo Finance (美股主力 / 台股最後備援)
     try:
@@ -307,24 +310,46 @@ def fetch_data(symbol: str, period: str):
                 info['source'] = 'Yahoo Finance'
                 return h, info, None
     except Exception as yf_e:
-        err_msg += f"YF 失效: {str(yf_e)[:50]}"
+        err_msg += f"YF: {str(yf_e)[:20]}"
 
     return None, None, f"抓取失敗: {err_msg}"
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_news(symbol: str):
+    news_list = []
+    # 1. 嘗試 Yahoo Finance
     try:
         t = yf.Ticker(symbol)
-        news = t.news
-        if not news: return []
-        return [{"title": n.get("title",""), "publisher": n.get("publisher","")} for n in news[:30]]
-    except: return []
+        yf_news = t.news
+        if yf_news:
+            for n in yf_news[:10]:
+                news_list.append({"title": n.get("title",""), "publisher": n.get("publisher","")})
+    except: pass
+    
+    # 2. 備援：若 Yahoo 無新聞(常見於台灣ETF)，呼叫 Google News RSS
+    if not news_list:
+        try:
+            query = f"{symbol.replace('.TW', '').replace('.TWO', '')} 台灣 股票"
+            url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                tree = ET.parse(response)
+                root = tree.getroot()
+                for item in root.findall('./channel/item')[:10]:
+                    title = item.find('title').text
+                    pub_node = item.find('source')
+                    publisher = pub_node.text if pub_node is not None else "Google News"
+                    news_list.append({"title": title, "publisher": publisher})
+        except: pass
+        
+    return news_list
 
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_market_overview():
     syms = {"台灣加權":"^TWII","S&P 500":"^GSPC","那斯達克":"^IXIC","VIX恐慌":"^VIX","費城半導":"^SOX","美元指數":"DX-Y.NYB"}
     tickers = list(syms.values())
     rows = []
+    fetch_time = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S")
     try:
         data = yf.download(tickers, period="5d", group_by="ticker", progress=False)
         for name, sym in syms.items():
@@ -339,18 +364,19 @@ def fetch_market_overview():
                         rows.append({"名稱":name, "現值":round(c2, 2), "漲跌%":round((c2 - c1) / max(c1, 0.01) * 100, 2)})
             except: continue
     except: pass
-    return sorted(rows, key=lambda x: list(syms.keys()).index(x["名稱"])) if rows else []
+    return sorted(rows, key=lambda x: list(syms.keys()).index(x["名稱"])) if rows else [], fetch_time
 
 @st.cache_data(ttl=600, show_spinner=False)
-def fetch_heatmap_data(market: str) -> pd.DataFrame:
+def fetch_heatmap_data(market: str):
     hot = TW_HOT if "台股" in market else US_HOT
     tickers, sym_map, rows = [], {}, []
+    fetch_time = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S")
     for sector, stocks in hot.items():
         for sym_, name_ in stocks:
             full = sym_+".TW" if "台股" in market and not sym_.endswith(".TW") else sym_
             tickers.append(full)
             sym_map[full] = (sector, name_)
-    if not tickers: return pd.DataFrame()
+    if not tickers: return pd.DataFrame(), fetch_time
     try:
         data = yf.download(tickers, period="5d", group_by="ticker", progress=False)
         for full in tickers:
@@ -366,7 +392,7 @@ def fetch_heatmap_data(market: str) -> pd.DataFrame:
                             rows.append({"板塊": sector, "名稱": name, "代號": full.replace(".TW",""), "漲跌%": round((c2 - c1) / c1 * 100, 2), "市值": 1e9})
             except: continue
     except: pass
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows), fetch_time
 
 # ══════════════════════════════════════════════
 # 6. 多週期量化指標計算
@@ -875,13 +901,14 @@ with st.sidebar:
 # ══════════════════════════════════════════════
 # 12. 主頁面 (戰情室)
 # ══════════════════════════════════════════════
-st.title("📈 股市小白分析系統 Pro V7.6")
-st.caption("富果 Fugle 即時串接 × 全市場極速掃描 × 原生動態排行榜")
+st.title("📈 股市小白分析系統 Pro V7.7")
+st.caption("全市場動態 Top 50 × 隔日預測優化 × 新聞備援機制")
 
-mkt = fetch_market_overview()
-if mkt:
-    mcols = st.columns(len(mkt))
-    for col,row in zip(mcols,mkt): 
+mkt_data, mkt_time = fetch_market_overview()
+if mkt_data:
+    st.caption(f"🌍 大盤數據來源：Yahoo Finance | 更新時間：{mkt_time}")
+    mcols = st.columns(len(mkt_data))
+    for col,row in zip(mcols,mkt_data): 
         chg=row["漲跌%"]
         col.metric(row["名稱"],str(row["現值"]),f"{'▲' if chg>=0 else '▼'}{abs(chg):.2f}%",delta_color="inverse")
 
@@ -926,15 +953,15 @@ with TABS[0]:
             entry = calc_entry(ind, hist)
             score = calc_score(ind, info)
             
-            # 修正：確保名稱不會顯示為 "0050.TW(0050.TW)"
             co_name = info.get("longName", "")
             if co_name and co_name == sym:
                 co_name = sym.replace(".TW", "").replace(".TWO", "")
             co = co_name if co_name else sym.replace(".TW", "").replace(".TWO", "")
 
             st.subheader(f"📌 {co} ({sym})")
-            st.caption(f"資料來源: `{info.get('source', '未知')}` | 更新時間: {info.get('fetch_time', '未知')}")
-            
+            st.markdown(f"<div style='font-size:12px;color:#a1a1aa;'>資料來源：{info.get('source', '未知')} | 資料更新時間：{info.get('fetch_time', '未知')}</div>", unsafe_allow_html=True)
+            st.write("")
+
             if api_key:
                 with st.expander("📰 最新市場新聞與 AI 深度解讀", expanded=False):
                     news_data = fetch_news(sym)
@@ -943,18 +970,18 @@ with TABS[0]:
                     else:
                         if st.button("🤖 AI 深度解讀新聞 (情緒 + 產業分類)"):
                             with st.spinner("AI 分析中..."):
-                                news_str = "\n".join([f"- {n['title']}" for n in news_data])
+                                news_str = "\n".join([f"- [{n['publisher']}] {n['title']}" for n in news_data])
                                 tags = ai_classify_news_tags(news_data, api_key)
                                 
                                 for i, n in enumerate(news_data):
                                     tag = tags.get(str(i+1), "其他")
-                                    st.markdown(f"• <span class='tag-badge'>{tag}</span> {n['title']}", unsafe_allow_html=True)
+                                    st.markdown(f"• <span class='tag-badge'>{tag}</span> **[{n['publisher']}]** {n['title']}", unsafe_allow_html=True)
                                 
                                 st.divider()
                                 rpt = ai_news_sentiment(news_str, sym, api_key)
                                 st.markdown(f"<div style='background:#1e1e2e;padding:15px;border-left:4px solid #3b82f6;'>{rpt}</div>", unsafe_allow_html=True)
                         else:
-                            for n in news_data: st.write(f"• {n['title']}")
+                            for n in news_data: st.write(f"• **[{n['publisher']}]** {n['title']}")
 
             score_col, kpi_col = st.columns([1,2])
             with score_col:
@@ -1012,11 +1039,11 @@ with TABS[0]:
                     with debate_tab3: st.markdown(judge_rpt)
 
 # ==========================================
-# 分頁 2: AI 評分排行榜 (原生組件版，100% 杜絕亂碼)
+# 分頁 2: AI 評分排行榜 (Top 50 預測優化版)
 # ==========================================
 with TABS[1]:
-    st.markdown("### 🏆 AI 全市場評分排行榜 (Top 10)")
-    st.caption("🚀 系統已切換為【全市場動態掃描】機制（含上市櫃近2000檔），AI 無死角評分。")
+    st.markdown("### 🏆 AI 全市場評分排行榜 (Top 50)")
+    st.caption("🚀 系統已切換為【全市場動態掃描】機制（含上市櫃近2000檔），新增動能斜率與收盤強勢度進行隔日預測。")
     
     lb_cat = st.radio("選擇分類", ["個股", "被動式ETF", "主動式ETF"], horizontal=True)
     
@@ -1033,20 +1060,25 @@ with TABS[1]:
             cat_data = []
         
         if not cat_data:
-            st.info(f"尚無 {lb_cat} 的排行資料，背景程式可能正在進行首次全市場大掃描，請稍候幾分鐘再重新整理。")
+            st.info(f"尚無 {lb_cat} 的排行資料，背景程式可能正在進行首次全市場大掃描，請稍候。")
         else:
             for idx, item in enumerate(cat_data):
                 medal = "🥇" if idx == 0 else "🥈" if idx == 1 else "🥉" if idx == 2 else f"#{idx+1}"
                 
-                # 使用 Streamlit 原生容器與排版，徹底捨棄 HTML <div> 以杜絕亂碼
                 with st.container(border=True):
                     c1, c2 = st.columns([4, 1])
                     c1.markdown(f"#### {medal} {item.get('sym','')} {item.get('name','')}  <span style='font-size:14px;color:#ff4444;background:rgba(255,68,68,0.1);padding:4px 8px;border-radius:4px;'>📈 {item.get('status','')}</span>", unsafe_allow_html=True)
                     c2.markdown(f"<div style='text-align:right;'><span style='font-size:36px;font-weight:900;color:#ff4444;line-height:1;'>{item.get('score',0)}</span><span style='color:#64748b;font-size:14px;'> / 100</span></div>", unsafe_allow_html=True)
                     
-                    st.markdown(f"<div style='font-size:13px;color:#a1a1aa;margin-bottom:15px;padding-top:10px;border-top:1px dashed #3a3a5e;'>💡 <b>入榜主要原因：</b> {item.get('reason','')} <span style='float:right;color:#64748b;'>更新時間：{item.get('update_time','')}</span></div>", unsafe_allow_html=True)
+                    st.markdown(f"""
+                    <div style='font-size:13px;color:#a1a1aa;margin-bottom:15px;padding-top:10px;border-top:1px dashed #3a3a5e;'>
+                        <div style='margin-bottom:4px;'>⚡ <b>當沖潛力：</b> <span style='color:#e2e8f0;'>{item.get('dt_reason', '')}</span></div>
+                        <div style='margin-bottom:4px;'>📈 <b>短線波段：</b> <span style='color:#e2e8f0;'>{item.get('st_reason', '')}</span></div>
+                        <div style='margin-bottom:4px;'>💎 <b>長線存股：</b> <span style='color:#e2e8f0;'>{item.get('lt_reason', '')}</span></div>
+                        <div style='text-align:right;color:#64748b;font-size:11px;margin-top:5px;'>資料來源：{item.get('source', 'Yahoo Finance (批次)')} | 運算時間：{item.get('update_time', '未知')}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
                     
-                    # 原生進度條元件，穩定且美觀
                     p1, p2, p3 = st.columns(3)
                     p1.caption(f"當沖爆發力: {item.get('dt_score',0)}")
                     p1.progress(item.get('dt_score',0) / 100.0)
@@ -1115,12 +1147,13 @@ with TABS[3]:
                 total_c = sum(e.get("cost", 0) * e.get("shares", 0) for e in entries)
                 avg_c = round(total_c / total_s, 2) if total_s > 0 else 0
                 try:
-                    hh2, info2, err2 = fetch_data(sym, "1mo")
-                    if hh2 is not None and not hh2.empty:
+                    hh2 = yf.Ticker(sym).history(period="5d")
+                    if "Close" in hh2.columns and not hh2["Close"].dropna().empty:
                         cp2 = round(float(hh2["Close"].dropna().iloc[-1]), 2)
                         pnl_pct = round((cp2 - avg_c) / max(avg_c, 0.01) * 100, 2)
                         v2, c2 = round(cp2 * total_s, 0), round(total_c, 0)
-                        sec = info2.get("sector", "其他") if info2 else "其他"
+                        try: sec = yf.Ticker(sym).info.get("sector", "其他") or "其他"
+                        except: sec = "其他"
                         sector_map[sym] = sec
                         pr_rows.append({"代號": sym, "均價": avg_c, "現價": cp2, "損益%": f"{pnl_pct:+.2f}%", "總損益": f"{v2-c2:+,.0f}", "總股數": total_s, "板塊": sec})
                         tc_all += c2
@@ -1253,8 +1286,11 @@ with TABS[4]:
 # ==========================================
 with TABS[5]:
     if st.button("🔄 載入板塊熱力圖",type="primary"):
-        with st.spinner("抓取板塊數據..."): df_hm = fetch_heatmap_data(market)
-        if not df_hm.empty: st.plotly_chart(build_heatmap_chart(df_hm,market),use_container_width=True)
+        with st.spinner("抓取板塊數據..."): 
+            df_hm, hm_time = fetch_heatmap_data(market)
+        if not df_hm.empty: 
+            st.caption(f"資料來源：Yahoo Finance | 更新時間：{hm_time}")
+            st.plotly_chart(build_heatmap_chart(df_hm,market),use_container_width=True)
 
 # ==========================================
 # 分頁 7: 交易心理診斷
@@ -1275,7 +1311,7 @@ with TABS[6]:
             b5.metric("持有獲利天數",f"{bias['avg_win_days']:.0f}天")
             b6.metric("持有虧損天數",f"{bias['avg_loss_days']:.0f}天",delta="⚠️ 異常" if bias['avg_loss_days']>bias['avg_win_days'] else "正常",delta_color="off")
             
-            if bias["disposition_effect"]: st.error("🚨 偵測到處置效應 (持有虧損股時間顯著長於獲利股)！請嚴格執行停簽。")
+            if bias["disposition_effect"]: st.error("🚨 偵測到處置效應 (持有虧損股時間顯著長於獲利股)！請嚴格執行停損。")
             
             if api_key and st.button("🧠 AI 幫你抓投資壞習慣",type="primary"):
                 with st.spinner("AI 快速總結中..."):
@@ -1283,4 +1319,4 @@ with TABS[6]:
                     st.markdown(bias_rpt)
 
 st.divider()
-st.caption("📈 股市小白分析系統 Pro V7.6 | 極速動態排行榜完全體")
+st.caption("📈 股市小白分析系統 Pro V7.7 | 雙重新聞備援 × 全局時間戳記版")

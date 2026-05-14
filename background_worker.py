@@ -10,10 +10,13 @@ from datetime import datetime, timezone, timedelta
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 TW_TZ = timezone(timedelta(hours=8))
 
-# 將計算邏輯獨立，避免 import app.py 觸發 Streamlit 警告
 def calc_indicators(hist: pd.DataFrame) -> dict:
-    c, h, l, v = hist["Close"].astype(float), hist["High"].astype(float), hist["Low"].astype(float), hist["Volume"].astype(float)
+    c = hist["Close"].astype(float)
+    h = hist["High"].astype(float)
+    l = hist["Low"].astype(float)
+    v = hist["Volume"].astype(float)
     n = len(c)
+
     def _last(s):
         try: val = float(s.iloc[-1]); return val if val==val else 0.0
         except: return 0.0
@@ -31,16 +34,27 @@ def calc_indicators(hist: pd.DataFrame) -> dict:
     r_min, r_max = rsi.rolling(14).min(), rsi.rolling(14).max()
     stk = (100*(rsi-r_min)/(r_max-r_min+1e-10)).clip(0,100)
     
-    price = round(_last(c),2)
+    price = round(_last(c), 2)
     vwap = ((h+l+c)/3*v).rolling(20).sum()/(v.rolling(20).sum()+1e-10)
     
+    macd_slope = float(macd_h.iloc[-1]) - float(macd_h.iloc[-2]) if n > 1 else 0.0
+    
     ind = {
-        "price": price, "vwap": round(_last(vwap),2), "rsi": round(_last(rsi),1), 
-        "stoch_k": round(_last(stk),1), "macd_hist": round(_last(macd_h),4),
-        "ma5": round(_last(ma5),2), "ma20": round(_last(ma20),2), "ma60": round(_last(ma60),2),
-        "volume": int(_last(v)), "vol_ma20": int(_last(v.rolling(20).mean())),
+        "price": price, 
+        "vwap": round(_last(vwap),2), 
+        "rsi": round(_last(rsi),1), 
+        "stoch_k": round(_last(stk),1), 
+        "macd_hist": round(_last(macd_h),4),
+        "macd_slope": macd_slope,
+        "ma5": round(_last(ma5),2), 
+        "ma20": round(_last(ma20),2), 
+        "ma60": round(_last(ma60),2),
+        "volume": int(_last(v)), 
+        "vol_ma20": int(_last(v.rolling(20).mean())),
         "high_52w": round(float(c.rolling(min(252,n)).max().iloc[-1]),2), 
-        "low_52w": round(float(c.rolling(min(252,n)).min().iloc[-1]),2)
+        "low_52w": round(float(c.rolling(min(252,n)).min().iloc[-1]),2),
+        "_last_h": float(h.iloc[-1]),
+        "_last_l": float(l.iloc[-1])
     }
 
     vr = ind["volume"] / max(ind["vol_ma20"], 1)
@@ -81,6 +95,43 @@ def get_full_universe():
         print(f"獲取全市場清單失敗: {e}")
         return None
 
+def analyze_and_score(df, sym, name, category, update_time):
+    ind = calc_indicators(df)
+    
+    # 預測隔日動能：收盤強勢度 (是否收在最高點附近)
+    close_strength = (ind["price"] - ind["_last_l"]) / max((ind["_last_h"] - ind["_last_l"]), 0.01)
+    dt_score = min(100, int((ind["vol_ratio"] * 15) + (close_strength * 30) + (20 if ind["price"] > ind["vwap"] else 0) + (10 if ind["macd_slope"] > 0 else 0)))
+    dt_reason = f"收盤接近最高點({close_strength*100:.0f}%)" if close_strength > 0.8 else "量能爆發" if ind["vol_ratio"] > 2 else "動能普通"
+    if ind["price"] > ind["vwap"]: dt_reason += "，且站上法人均價(VWAP)"
+
+    # 預測短期波段：MACD 動能加速且均線多頭
+    st_score = min(100, int((35 if ind["ma5"] > ind["ma20"] else 0) + (35 if ind["macd_slope"] > 0 else 0) + (15 if 40 <= ind["rsi"] <= 70 else 0) + (ind["stoch_k"] * 0.15)))
+    st_reason = "均線多頭排列" if ind["ma5"] > ind["ma20"] else "均線震盪中"
+    st_reason += "，且 MACD 動能正在擴大加速" if ind["macd_slope"] > 0 else "，但動能未見顯著加速"
+
+    # 預測長線存股：站穩季線且乖離不大
+    lt_score = min(100, int((40 if ind["price"] > ind["ma60"] else 0) + (30 if 20 <= ind["position_52w"] <= 80 else 10) + (30 if ind["ma20"] > ind["ma60"] else 0)))
+    lt_reason = "長期趨勢向上(月線>季線)" if ind["ma20"] > ind["ma60"] else "長期趨勢偏弱"
+    lt_reason += f"，目前位階適中({ind['position_52w']:.0f}%)" if 20 <= ind["position_52w"] <= 80 else "，但目前價格偏高/偏低"
+
+    total_score = round(dt_score * 0.2 + st_score * 0.4 + lt_score * 0.4, 1)
+
+    return {
+        "sym": sym.replace(".TW", "").replace(".TWO", ""), 
+        "name": name, 
+        "category": category,
+        "score": total_score, 
+        "dt_score": dt_score, 
+        "st_score": st_score, 
+        "lt_score": lt_score,
+        "dt_reason": dt_reason,
+        "st_reason": st_reason,
+        "lt_reason": lt_reason,
+        "status": ind["status"], 
+        "source": "Yahoo Finance (批次掃描)",
+        "update_time": update_time
+    }
+
 def generate_leaderboard():
     universe = get_full_universe()
     if not universe:
@@ -88,10 +139,13 @@ def generate_leaderboard():
         return
         
     all_tickers = [sym for cat in universe.values() for sym in cat.keys()]
-    print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 2. 開始批次下載 {len(all_tickers)} 檔標的歷史數據 (多線程併發)...")
+    print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 2. 開始批次下載 {len(all_tickers)} 檔標的歷史數據 (顯示進度條)...")
     
+    # 開啟 yfinance 進度條
     data = yf.download(all_tickers, period="6mo", group_by="ticker", threads=True, progress=True)
-    print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 3. 資料下載完成，開始進行 AI 策略演算評分...")
+    update_time = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    
+    print(f"\n[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 3. 資料下載完成，開始進行 AI 策略演算評分...")
     
     all_results = {"個股": [], "被動式ETF": [], "主動式ETF": []}
     for category, symbols_dict in universe.items():
@@ -102,28 +156,16 @@ def generate_leaderboard():
                 df = df.dropna(subset=["Close"])
                 if len(df) < 20: continue 
                 
-                ind = calc_indicators(df)
-                dt_score = min(100, int((ind["vol_ratio"] / 2.5 * 40) + (20 if ind["price"] > ind["vwap"] else 0) + (ind["rsi"] * 0.4)))
-                st_score = min(100, int((30 if ind["ma5"] > ind["ma20"] else 0) + (30 if ind["macd_hist"] > 0 else 0) + (ind["stoch_k"] * 0.4)))
-                lt_score = min(100, int((40 if ind["price"] > ind["ma60"] else 0) + (30 if 30 <= ind["position_52w"] <= 70 else 10) + (30 if ind["ma20"] > ind["ma60"] else 0)))
-                total_score = round(dt_score * 0.2 + st_score * 0.4 + lt_score * 0.4, 1)
+                # 基礎流動性過濾
+                vol_check = df["Volume"].iloc[-1]
+                if pd.isna(vol_check) or (vol_check < 500 and category == "個股"): continue
                 
-                if ind.get("volume", 0) < 500 and category == "個股": continue
-                
-                reason = []
-                if dt_score > 75: reason.append(f"量能放大({ind['vol_ratio']:.1f}x)")
-                if st_score > 75: reason.append("短線均線多頭")
-                if lt_score > 75: reason.append("站穩季線支撐")
-                if not reason: reason.append("震盪盤整中")
-                
-                all_results[category].append({
-                    "sym": sym.replace(".TW", "").replace(".TWO", ""), "name": name, "category": category,
-                    "score": total_score, "dt_score": dt_score, "st_score": st_score, "lt_score": lt_score,
-                    "status": ind["status"], "reason": " | ".join(reason), "update_time": datetime.now(TW_TZ).strftime("%m/%d %H:%M")
-                })
+                res = analyze_and_score(df, sym, name, category, update_time)
+                all_results[category].append(res)
             except: continue
             
-    final_lb = {cat: sorted(items, key=lambda x: x["score"], reverse=True)[:10] for cat, items in all_results.items()}
+    # 擴展為 Top 50
+    final_lb = {cat: sorted(items, key=lambda x: x["score"], reverse=True)[:50] for cat, items in all_results.items()}
     with open("leaderboard.json", "w", encoding="utf-8") as f:
         json.dump(final_lb, f, ensure_ascii=False, indent=4)
     print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] ✅ 全市場排行榜更新完成！已寫入 leaderboard.json")
