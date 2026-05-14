@@ -1,5 +1,5 @@
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║  股市小白分析系統 Pro  V7.2  ─  大滿配終極版 (自用全功能版)         ║
+# ║  股市小白分析系統 Pro  V7.2  ─  大滿配終極版 (含多分類防呆排行榜)   ║
 # ║  Taiwan Color: RED=漲  GREEN=跌  |  當沖/短線/長線 三維度決策整合   ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 import streamlit as st
@@ -914,7 +914,7 @@ with st.sidebar:
 # 12. 主頁面 (戰情室)
 # ══════════════════════════════════════════════
 st.title("📈 股市小白分析系統 Pro V7.2")
-st.caption("完整無刪減版 × FinMind 備援 × 背景即時排行榜")
+st.caption("完整無刪減版 × FinMind 備援 × 高級動態排行榜")
 
 mkt = fetch_market_overview()
 if mkt:
@@ -1045,28 +1045,13 @@ with TABS[0]:
                     with debate_tab3: st.markdown(judge_rpt)
 
 # ==========================================
-# 分頁 2: AI 評分排行榜
+# 分頁 2: AI 評分排行榜 (具備防呆與多分類渲染)
 # ==========================================
-# 將此段代碼替換您 app.py 中 TABS[1] (AI 評分排行榜) 的內容
-
 with TABS[1]:
     st.markdown("""
     <style>
-    .lb-card {
-        background-color: #1e1e2e;
-        border: 1px solid #3a3a5e;
-        border-radius: 12px;
-        padding: 20px;
-        margin-bottom: 16px;
-        position: relative;
-        overflow: hidden;
-    }
-    .lb-card::before {
-        content: '';
-        position: absolute;
-        bottom: 0; left: 0; width: 100%; height: 4px;
-        background: linear-gradient(90deg, #ff4444, #ff0000);
-    }
+    .lb-card { background-color: #1e1e2e; border: 1px solid #3a3a5e; border-radius: 12px; padding: 20px; margin-bottom: 16px; position: relative; overflow: hidden; }
+    .lb-card::before { content: ''; position: absolute; bottom: 0; left: 0; width: 100%; height: 4px; background: linear-gradient(90deg, #ff4444, #ff0000); }
     .lb-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; }
     .lb-title { font-size: 20px; font-weight: bold; color: #ffffff; display: flex; align-items: center; gap: 10px; margin:0;}
     .lb-status { font-size: 13px; color: #ff4444; background: rgba(255,68,68,0.1); padding: 4px 8px; border-radius: 4px; }
@@ -1084,16 +1069,24 @@ with TABS[1]:
     st.markdown("### 🏆 AI 綜合評分排行榜 (Top 10)")
     st.caption("🚀 整合技術面、量能與動能之全自動分類排行，為新手過濾市場雜訊。")
     
-    lb_cat = st.radio("選擇分類", ["個股", "被動式ETF", "主動式ETF"], horizontal=True)
+    lb_cat = st.radio("選擇分類", ["個股", "被動式ETF", "主 মাস্টারETF"], horizontal=True)
     
     if os.path.exists("leaderboard.json"):
-        with open("leaderboard.json", "r", encoding="utf-8") as f:
-            full_lb_data = json.load(f)
+        try:
+            with open("leaderboard.json", "r", encoding="utf-8") as f:
+                full_lb_data = json.load(f)
+        except Exception:
+            full_lb_data = {}
             
-        cat_data = full_lb_data.get(lb_cat, [])
+        # [防呆機制 Type Check] 確保讀到的是字典而非舊版清單
+        if isinstance(full_lb_data, dict):
+            cat_data = full_lb_data.get(lb_cat, [])
+        else:
+            cat_data = []
+            st.warning("⚠️ 偵測到舊版排行榜格式 (List)。請確認背景是否已執行最新版的 `background_worker.py` 來覆蓋資料庫。")
         
-        if not cat_data:
-            st.info(f"尚無 {lb_cat} 的排行資料，請確認背景程式是否包含此分類。")
+        if not cat_data and isinstance(full_lb_data, dict):
+            st.info(f"尚無 {lb_cat} 的排行資料，請確認背景程式正在監控此分類。")
         else:
             for idx, item in enumerate(cat_data):
                 medal = "🥇" if idx == 0 else "🥈" if idx == 1 else "🥉" if idx == 2 else f'<span style="color:#64748b;font-size:18px;">{idx+1}</span>'
@@ -1102,32 +1095,32 @@ with TABS[1]:
                 <div class="lb-card">
                     <div class="lb-header">
                         <div class="lb-title">
-                            {medal} {item['sym']} {item['name']} 
-                            <span class="lb-status">📈 {item['status']}</span>
+                            {medal} {item.get('sym','')} {item.get('name','')} 
+                            <span class="lb-status">📈 {item.get('status','')}</span>
                         </div>
                         <div class="lb-score-container">
-                            <div class="lb-score">{item['score']}</div>
+                            <div class="lb-score">{item.get('score',0)}</div>
                             <div class="lb-score-sub">/ 100</div>
                         </div>
                     </div>
                     
                     <div class="lb-bars">
                         <div>
-                            <div class="bar-row"><span>當沖爆發力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item['dt_score']}%;"></div></div> <span>{item['dt_score']}</span></div>
-                            <div class="bar-row"><span>短線波段力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item['st_score']}%;"></div></div> <span>{item['st_score']}</span></div>
+                            <div class="bar-row"><span>當沖爆發力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item.get('dt_score',0)}%;"></div></div> <span>{item.get('dt_score',0)}</span></div>
+                            <div class="bar-row"><span>短線波段力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item.get('st_score',0)}%;"></div></div> <span>{item.get('st_score',0)}</span></div>
                         </div>
                         <div>
-                            <div class="bar-row"><span>長線存股力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item['lt_score']}%;"></div></div> <span>{item['lt_score']}</span></div>
+                            <div class="bar-row"><span>長線存股力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item.get('lt_score',0)}%;"></div></div> <span>{item.get('lt_score',0)}</span></div>
                         </div>
                     </div>
                     
                     <div class="lb-reason">
-                        💡 <b>入榜主要原因：</b> {item['reason']} <span style="float:right;font-size:11px;color:#64748b;">分析時間：{item['update_time']}</span>
+                        💡 <b>入榜主要原因：</b> {item.get('reason','')} <span style="float:right;font-size:11px;color:#64748b;">更新時間：{item.get('update_time','')}</span>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
     else:
-        st.warning("⚠️ 尚未建立排行榜資料！請確認同目錄下的 `background_worker.py` 是否已執行完成。")
+        st.warning("⚠️ 尚未建立排行榜資料庫 (leaderboard.json)！請確認是否已執行 `background_worker.py`。")
 
 # ==========================================
 # 分頁 3: 雙股 PK
