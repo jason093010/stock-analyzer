@@ -116,8 +116,11 @@ def generate_leaderboard():
         
     all_tickers = [sym for cat in universe.values() for sym in cat.keys()]
     print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 📥 開始批次下載 {len(all_tickers)} 檔歷史數據...")
-    data = yf.download(all_tickers, period="6mo", group_by="ticker", threads=True, progress=False)
     
+    # ✨ 已經將 progress 設為 True，您會看到華麗的進度條了！
+    data = yf.download(all_tickers, period="6mo", group_by="ticker", threads=True, progress=True)
+    
+    print(f"\n[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 🔄 下載完畢，整理有效資料...")
     # 整理有效 DataFrame 供 ML 使用
     valid_dfs = {}
     for sym in all_tickers:
