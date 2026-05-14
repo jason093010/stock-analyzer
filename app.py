@@ -1033,27 +1033,12 @@ with TABS[0]:
 # ==========================================
 # 分頁 2: AI 評分排行榜 (徹底修復渲染亂碼)
 # ==========================================
+# ==========================================
+# 分頁 2: AI 評分排行榜 (原生組件版，100% 杜絕亂碼)
+# ==========================================
 with TABS[1]:
-    st.markdown("""
-    <style>
-    .lb-card { background-color: #1e1e2e; border: 1px solid #3a3a5e; border-radius: 12px; padding: 20px; margin-bottom: 16px; position: relative; overflow: hidden; }
-    .lb-card::before { content: ''; position: absolute; bottom: 0; left: 0; width: 100%; height: 4px; background: linear-gradient(90deg, #ff4444, #ff0000); }
-    .lb-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; }
-    .lb-title { font-size: 20px; font-weight: bold; color: #ffffff; display: flex; align-items: center; gap: 10px; margin:0;}
-    .lb-status { font-size: 13px; color: #ff4444; background: rgba(255,68,68,0.1); padding: 4px 8px; border-radius: 4px; }
-    .lb-score-container { text-align: right; }
-    .lb-score { font-size: 42px; font-weight: 900; color: #ff4444; line-height: 1; }
-    .lb-score-sub { font-size: 12px; color: #64748b; }
-    .lb-bars { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-    .bar-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-size: 13px; color: #94a3b8; }
-    .bar-bg { width: 60%; height: 6px; background: #3a3a5e; border-radius: 3px; overflow: hidden; margin: 0 10px; }
-    .bar-fill { height: 100%; background: #ff4444; border-radius: 3px; }
-    .lb-reason { margin-top: 15px; padding-top: 15px; border-top: 1px dashed #3a3a5e; font-size: 13px; color: #a1a1aa; }
-    </style>
-    """, unsafe_allow_html=True)
-
-    st.markdown("### 🏆 AI 綜合評分排行榜 (Top 10)")
-    st.caption("🚀 整合技術面、量能與動能之全自動分類排行，為新手過濾市場雜訊。")
+    st.markdown("### 🏆 AI 全市場評分排行榜 (Top 10)")
+    st.caption("🚀 系統已切換為【全市場自動掃描】機制（含上市櫃近2000檔），運算無遺漏。單次更新約需 45-60 分鐘。")
     
     lb_cat = st.radio("選擇分類", ["個股", "被動式ETF", "主動式ETF"], horizontal=True)
     
@@ -1068,42 +1053,33 @@ with TABS[1]:
             cat_data = full_lb_data.get(lb_cat, [])
         else:
             cat_data = []
-            st.warning("⚠️ 偵測到舊版排行榜格式。請在終端機執行 `python background_worker.py` 來更新資料庫。")
         
-        if not cat_data and isinstance(full_lb_data, dict):
-            st.info(f"尚無 {lb_cat} 的排行資料，請確認背景程式正在監控此分類。")
+        if not cat_data:
+            st.info(f"尚無 {lb_cat} 的排行資料，背景程式可能正在進行首次全市場大掃描，請稍候。")
         else:
             for idx, item in enumerate(cat_data):
-                medal = "🥇" if idx == 0 else "🥈" if idx == 1 else "🥉" if idx == 2 else f'<span style="color:#64748b;font-size:18px;">{idx+1}</span>'
+                medal = "🥇" if idx == 0 else "🥈" if idx == 1 else "🥉" if idx == 2 else f"#{idx+1}"
                 
-                # 警告：此處字串絕對不可有任何「行首空白(Indentation)」，否則 Streamlit 會將其誤判為純文字代碼區塊！
-                html_content = f"""<div class="lb-card">
-<div class="lb-header">
-<div class="lb-title">
-{medal} {item.get('sym','')} {item.get('name','')} 
-<span class="lb-status">📈 {item.get('status','')}</span>
-</div>
-<div class="lb-score-container">
-<div class="lb-score">{item.get('score',0)}</div>
-<div class="lb-score-sub">/ 100</div>
-</div>
-</div>
-<div class="lb-bars">
-<div>
-<div class="bar-row"><span>當沖爆發力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item.get('dt_score',0)}%;"></div></div> <span>{item.get('dt_score',0)}</span></div>
-<div class="bar-row"><span>短線波段力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item.get('st_score',0)}%;"></div></div> <span>{item.get('st_score',0)}</span></div>
-</div>
-<div>
-<div class="bar-row"><span>長線存股力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item.get('lt_score',0)}%;"></div></div> <span>{item.get('lt_score',0)}</span></div>
-</div>
-</div>
-<div class="lb-reason">
-💡 <b>入榜主要原因：</b> {item.get('reason','')} <span style="float:right;font-size:11px;color:#64748b;">更新時間：{item.get('update_time','')}</span>
-</div>
-</div>"""
-                st.markdown(html_content, unsafe_allow_html=True)
+                # 使用 Streamlit 原生容器與排版，徹底捨棄 HTML
+                with st.container(border=True):
+                    c1, c2 = st.columns([4, 1])
+                    c1.markdown(f"#### {medal} {item.get('sym','')} {item.get('name','')}  <span style='font-size:14px;color:#ff4444;background:rgba(255,68,68,0.1);padding:4px 8px;border-radius:4px;'>📈 {item.get('status','')}</span>", unsafe_allow_html=True)
+                    c2.markdown(f"<div style='text-align:right;'><span style='font-size:36px;font-weight:900;color:#ff4444;line-height:1;'>{item.get('score',0)}</span><span style='color:#64748b;font-size:14px;'> / 100</span></div>", unsafe_allow_html=True)
+                    
+                    st.markdown(f"<div style='font-size:13px;color:#a1a1aa;margin-bottom:15px;padding-top:10px;border-top:1px dashed #3a3a5e;'>💡 <b>入榜主要原因：</b> {item.get('reason','')} <span style='float:right;color:#64748b;'>更新時間：{item.get('update_time','')}</span></div>", unsafe_allow_html=True)
+                    
+                    # 原生進度條，穩定且符合響應式設計
+                    p1, p2, p3 = st.columns(3)
+                    p1.caption(f"當沖爆發力: {item.get('dt_score',0)}")
+                    p1.progress(item.get('dt_score',0) / 100.0)
+                    
+                    p2.caption(f"短線波段力: {item.get('st_score',0)}")
+                    p2.progress(item.get('st_score',0) / 100.0)
+                    
+                    p3.caption(f"長線存股力: {item.get('lt_score',0)}")
+                    p3.progress(item.get('lt_score',0) / 100.0)
     else:
-        st.warning("⚠️ 尚未建立排行榜資料庫 (leaderboard.json)！請先在終端機執行 `python background_worker.py`。")
+        st.warning("⚠️ 尚未建立排行榜資料庫 (leaderboard.json)！請先在終端機啟動 `python background_worker.py`。")
 
 # ==========================================
 # 分頁 3: 雙股 PK
