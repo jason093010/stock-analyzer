@@ -1047,36 +1047,87 @@ with TABS[0]:
 # ==========================================
 # 分頁 2: AI 評分排行榜
 # ==========================================
+# 將此段代碼替換您 app.py 中 TABS[1] (AI 評分排行榜) 的內容
+
 with TABS[1]:
-    st.markdown("### 🏆 AI 評分排行榜 (Top 10)")
-    st.caption("🚀 背景排程自動分析更新，不卡頓、不消耗當前額度。")
+    st.markdown("""
+    <style>
+    .lb-card {
+        background-color: #1e1e2e;
+        border: 1px solid #3a3a5e;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 16px;
+        position: relative;
+        overflow: hidden;
+    }
+    .lb-card::before {
+        content: '';
+        position: absolute;
+        bottom: 0; left: 0; width: 100%; height: 4px;
+        background: linear-gradient(90deg, #ff4444, #ff0000);
+    }
+    .lb-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; }
+    .lb-title { font-size: 20px; font-weight: bold; color: #ffffff; display: flex; align-items: center; gap: 10px; margin:0;}
+    .lb-status { font-size: 13px; color: #ff4444; background: rgba(255,68,68,0.1); padding: 4px 8px; border-radius: 4px; }
+    .lb-score-container { text-align: right; }
+    .lb-score { font-size: 42px; font-weight: 900; color: #ff4444; line-height: 1; }
+    .lb-score-sub { font-size: 12px; color: #64748b; }
+    .lb-bars { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .bar-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-size: 13px; color: #94a3b8; }
+    .bar-bg { width: 60%; height: 6px; background: #3a3a5e; border-radius: 3px; overflow: hidden; margin: 0 10px; }
+    .bar-fill { height: 100%; background: #ff4444; border-radius: 3px; }
+    .lb-reason { margin-top: 15px; padding-top: 15px; border-top: 1px dashed #3a3a5e; font-size: 13px; color: #a1a1aa; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown("### 🏆 AI 綜合評分排行榜 (Top 10)")
+    st.caption("🚀 整合技術面、量能與動能之全自動分類排行，為新手過濾市場雜訊。")
+    
+    lb_cat = st.radio("選擇分類", ["個股", "被動式ETF", "主動式ETF"], horizontal=True)
     
     if os.path.exists("leaderboard.json"):
         with open("leaderboard.json", "r", encoding="utf-8") as f:
-            lb_data = json.load(f)
+            full_lb_data = json.load(f)
             
-        for idx, item in enumerate(lb_data):
-            medal = "🥇" if idx == 0 else "🥈" if idx == 1 else "🥉" if idx == 2 else f"🏅 {idx+1}."
-            tech_pct = int((item['dims']['技術'] / 30) * 100)
-            mom_pct = int((item['dims']['動能'] / 25) * 100)
-            
-            st.markdown(f"""
-            <div style="background:#1e1e2e; border:1px solid #3a3a5e; border-left:4px solid #ff4444; border-radius:8px; padding:16px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
-                <div style="width:70%;">
-                    <h4 style="margin:0; color:#e2e8f0;">{medal} {item['sym']} {item['name']} <span style="font-size:14px; margin-left:10px; color:#94a3b8;">{item['status']}</span></h4>
-                    <div style="display:flex; justify-content:space-between; font-size:12px; color:#64748b; margin-top:12px;">
-                        <div style="width:45%;">技術指標 <progress value="{tech_pct}" max="100" style="width:60px;"></progress> {tech_pct}%</div>
-                        <div style="width:45%;">價格動能 <progress value="{mom_pct}" max="100" style="width:60px;"></progress> {mom_pct}%</div>
+        cat_data = full_lb_data.get(lb_cat, [])
+        
+        if not cat_data:
+            st.info(f"尚無 {lb_cat} 的排行資料，請確認背景程式是否包含此分類。")
+        else:
+            for idx, item in enumerate(cat_data):
+                medal = "🥇" if idx == 0 else "🥈" if idx == 1 else "🥉" if idx == 2 else f'<span style="color:#64748b;font-size:18px;">{idx+1}</span>'
+                
+                st.markdown(f"""
+                <div class="lb-card">
+                    <div class="lb-header">
+                        <div class="lb-title">
+                            {medal} {item['sym']} {item['name']} 
+                            <span class="lb-status">📈 {item['status']}</span>
+                        </div>
+                        <div class="lb-score-container">
+                            <div class="lb-score">{item['score']}</div>
+                            <div class="lb-score-sub">/ 100</div>
+                        </div>
+                    </div>
+                    
+                    <div class="lb-bars">
+                        <div>
+                            <div class="bar-row"><span>當沖爆發力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item['dt_score']}%;"></div></div> <span>{item['dt_score']}</span></div>
+                            <div class="bar-row"><span>短線波段力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item['st_score']}%;"></div></div> <span>{item['st_score']}</span></div>
+                        </div>
+                        <div>
+                            <div class="bar-row"><span>長線存股力</span> <div class="bar-bg"><div class="bar-fill" style="width: {item['lt_score']}%;"></div></div> <span>{item['lt_score']}</span></div>
+                        </div>
+                    </div>
+                    
+                    <div class="lb-reason">
+                        💡 <b>入榜主要原因：</b> {item['reason']} <span style="float:right;font-size:11px;color:#64748b;">分析時間：{item['update_time']}</span>
                     </div>
                 </div>
-                <div style="text-align:right;">
-                    <div style="font-size:2rem; font-weight:900; color:#ff4444; line-height:1;">{item['score']}</div>
-                    <div style="color:#64748b; font-size:11px; margin-top:4px;">更新: {item['update_time'][11:]}</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
     else:
-        st.warning("⚠️ 尚未建立排行榜資料！請確認同目錄下的 `background_worker.py` 是否有被正確執行過。")
+        st.warning("⚠️ 尚未建立排行榜資料！請確認同目錄下的 `background_worker.py` 是否已執行完成。")
 
 # ==========================================
 # 分頁 3: 雙股 PK
