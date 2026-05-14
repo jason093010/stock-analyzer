@@ -116,12 +116,8 @@ def generate_leaderboard():
         
     all_tickers = [sym for cat in universe.values() for sym in cat.keys()]
     print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 📥 開始批次下載 {len(all_tickers)} 檔歷史數據...")
-    
-    # ✨ 已經將 progress 設為 True，您會看到華麗的進度條了！
     data = yf.download(all_tickers, period="6mo", group_by="ticker", threads=True, progress=True)
     
-    print(f"\n[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 🔄 下載完畢，整理有效資料...")
-    # 整理有效 DataFrame 供 ML 使用
     valid_dfs = {}
     for sym in all_tickers:
         try:
@@ -130,31 +126,63 @@ def generate_leaderboard():
                 valid_dfs[sym] = df.dropna(subset=["Close"])
         except: continue
 
-    # 執行 ML 預測
     ml_win_probs = train_and_predict(valid_dfs)
     update_time = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S")
     db_records = []
     
-    print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 🧠 進行指標評分與資料庫寫入...")
+    print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 🧠 進行指標評分、生成詳細邏輯與資料庫寫入...")
     for category, symbols_dict in universe.items():
         for sym, name in symbols_dict.items():
             if sym not in valid_dfs or sym not in ml_win_probs: continue
             
             df = valid_dfs[sym]
             c = float(df["Close"].iloc[-1])
+            h = float(df["High"].iloc[-1])
+            l = float(df["Low"].iloc[-1])
             vol = float(df["Volume"].iloc[-1])
             if vol < 500 and category == "個股": continue # 流動性過濾
             
-            # 使用最新的一筆特徵計算傳統分數 (沿用 V7.7 邏輯保留相容性)
-            ma5, ma20, ma60 = df["Close"].rolling(5).mean().iloc[-1], df["Close"].rolling(20).mean().iloc[-1], df["Close"].rolling(60).mean().iloc[-1]
+            # --- 重新計算詳細特徵以產生解說 ---
+            ma5 = df["Close"].rolling(5).mean().iloc[-1]
+            ma20 = df["Close"].rolling(20).mean().iloc[-1]
+            ma60 = df["Close"].rolling(60).mean().iloc[-1]
+            vol_ma20 = df["Volume"].rolling(20).mean().iloc[-1]
+            vol_ratio = vol / (vol_ma20 + 1e-10)
             vwap = ((df["High"]+df["Low"]+df["Close"])/3*df["Volume"]).rolling(20).sum().iloc[-1] / (df["Volume"].rolling(20).sum().iloc[-1]+1e-10)
-            vol_ratio = vol / (df["Volume"].rolling(20).mean().iloc[-1] + 1)
             
-            close_strength = (c - df["Low"].iloc[-1]) / max((df["High"].iloc[-1] - df["Low"].iloc[-1]), 0.01)
+            ema12 = df["Close"].ewm(span=12, adjust=False).mean()
+            ema26 = df["Close"].ewm(span=26, adjust=False).mean()
+            macd_h = (ema12 - ema26) - (ema12 - ema26).ewm(span=9, adjust=False).mean()
+            macd_slope = macd_h.iloc[-1] - macd_h.iloc[-2] if len(macd_h) > 1 else 0
+
+            high_52w = df["Close"].rolling(252, min_periods=1).max().iloc[-1]
+            low_52w = df["Close"].rolling(252, min_periods=1).min().iloc[-1]
+            pos_52w = (c - low_52w) / max((high_52w - low_52w), 0.01) * 100
+            
+            diff = df["Close"].diff()
+            gain = diff.clip(lower=0).rolling(14).mean().iloc[-1]
+            loss = (-diff.clip(upper=0)).rolling(14).mean().iloc[-1]
+            rsi = 100 - (100 / (1 + gain / (loss if loss != 0 else 1e-10)))
+
+            close_strength = (c - l) / max((h - l), 0.01)
+            
+            # --- 分數計算 ---
             dt_score = min(100, int((vol_ratio * 15) + (close_strength * 30) + (20 if c > vwap else 0)))
-            st_score = min(100, int(35 if ma5 > ma20 else 0))
-            lt_score = min(100, int(40 if c > ma60 else 0))
+            st_score = min(100, int((35 if ma5 > ma20 else 0) + (20 if macd_slope > 0 else 0) + (15 if 40 <= rsi <= 70 else 0)))
+            lt_score = min(100, int((40 if c > ma60 else 0) + (30 if 20 <= pos_52w <= 80 else 10) + (30 if ma20 > ma60 else 0)))
             total_score = round(dt_score * 0.2 + st_score * 0.4 + lt_score * 0.4, 1)
+            
+            # --- 動態生成詳細原因 (修復此處) ---
+            dt_reason = f"收盤強勢(收在最高點附近{close_strength*100:.0f}%)" if close_strength > 0.8 else f"量能放大({vol_ratio:.1f}倍均量)" if vol_ratio > 1.5 else "動能普通，未見明顯量價爆發"
+            if c > vwap: dt_reason += "，且站穩法人均價(VWAP)"
+            
+            st_reason = "均線多頭排列" if ma5 > ma20 else "均線糾結震盪中"
+            st_reason += "，且 MACD 動能正在擴大加速" if macd_slope > 0 else "，但動能尚未見到顯著加速"
+            
+            lt_reason = "長期趨勢向上(月線大於季線)" if ma20 > ma60 else "長期趨勢偏弱(月線低於季線)"
+            lt_reason += f"，目前位階適中({pos_52w:.0f}%)" if 20 <= pos_52w <= 80 else f"，目前位階偏高/偏低({pos_52w:.0f}%)"
+
+            status = "強勢多頭" if (ma5 > ma20 > ma60 and rsi > 55) else "強勢空頭" if (ma5 < ma20 < ma60 and rsi < 45) else "盤整蓄勢"
             
             db_records.append({
                 "symbol": sym.replace(".TW", "").replace(".TWO", ""),
@@ -165,14 +193,13 @@ def generate_leaderboard():
                 "dt_score": dt_score,
                 "st_score": st_score,
                 "lt_score": lt_score,
-                "dt_reason": f"AI 勝率預測: {ml_win_probs[sym]}%",
-                "st_reason": f"量比: {vol_ratio:.1f}x",
-                "lt_reason": "技術面強度" if ma20 > ma60 else "空頭排列",
-                "status": "AI 分析完成",
+                "dt_reason": dt_reason,
+                "st_reason": st_reason,
+                "lt_reason": lt_reason,
+                "status": status,
                 "update_time": update_time
             })
             
-    # 寫入 Supabase (使用 upsert 避免主鍵衝突)
     if db_records:
         try:
             supabase.table("ai_leaderboard").upsert(db_records).execute()
