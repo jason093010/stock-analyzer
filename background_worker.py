@@ -1,174 +1,181 @@
-import json
 import time
 import logging
 import pandas as pd
-import yfinance as yf
 import numpy as np
+import yfinance as yf
 from datetime import datetime, timezone, timedelta
+from sklearn.ensemble import RandomForestClassifier
+from supabase import create_client
 
-# 隱藏 yfinance 批次下載時的雜訊
+# 填入您的 Supabase 資訊 (請確保與 app.py 的 secrets 一致)
+SUPABASE_URL = "https://kwnwylttozycqabvfjwa.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3bnd5bHR0b3p5Y3FhYnZmandhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg0MTgzNTEsImV4cCI6MjA5Mzk5NDM1MX0.1jEu7cR5GVks8RZPPwqSuoCBdGTtE8s3O4c0z5ZGdAc"
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 TW_TZ = timezone(timedelta(hours=8))
 
-def calc_indicators(hist: pd.DataFrame) -> dict:
-    c = hist["Close"].astype(float)
-    h = hist["High"].astype(float)
-    l = hist["Low"].astype(float)
-    v = hist["Volume"].astype(float)
-    n = len(c)
-
-    def _last(s):
-        try: val = float(s.iloc[-1]); return val if val==val else 0.0
-        except: return 0.0
-
-    ma5, ma20, ma60 = c.rolling(5).mean(), c.rolling(20).mean(), c.rolling(min(60,n)).mean()
-    ema12, ema26 = c.ewm(span=12,adjust=False).mean(), c.ewm(span=26,adjust=False).mean()
-    macd = ema12-ema26
-    macd_s = macd.ewm(span=9,adjust=False).mean()
-    macd_h = macd-macd_s
-
-    d = c.diff()
-    gain, loss = d.clip(lower=0).rolling(14).mean(), (-d.clip(upper=0)).rolling(14).mean()
-    rsi = (100-100/(1+gain/loss.replace(0,1e-10))).clip(0,100)
-
-    r_min, r_max = rsi.rolling(14).min(), rsi.rolling(14).max()
-    stk = (100*(rsi-r_min)/(r_max-r_min+1e-10)).clip(0,100)
+def calc_ml_features(hist: pd.DataFrame) -> pd.DataFrame:
+    """計算並回傳包含特徵與標籤的 DataFrame，供 ML 訓練使用"""
+    df = hist.copy()
+    c = df["Close"].astype(float)
+    h = df["High"].astype(float)
+    l = df["Low"].astype(float)
+    v = df["Volume"].astype(float)
     
-    price = round(_last(c), 2)
-    vwap = ((h+l+c)/3*v).rolling(20).sum()/(v.rolling(20).sum()+1e-10)
+    # 技術指標 (特徵)
+    df['ma5'] = c.rolling(5).mean()
+    df['ma20'] = c.rolling(20).mean()
+    df['ma60'] = c.rolling(60).mean()
+    df['dist_ma20'] = (c - df['ma20']) / df['ma20']
     
-    macd_slope = float(macd_h.iloc[-1]) - float(macd_h.iloc[-2]) if n > 1 else 0.0
+    ema12, ema26 = c.ewm(span=12, adjust=False).mean(), c.ewm(span=26, adjust=False).mean()
+    macd = ema12 - ema26
+    macd_s = macd.ewm(span=9, adjust=False).mean()
+    df['macd_hist'] = macd - macd_s
+    df['macd_slope'] = df['macd_hist'].diff()
     
-    ind = {
-        "price": price, 
-        "vwap": round(_last(vwap),2), 
-        "rsi": round(_last(rsi),1), 
-        "stoch_k": round(_last(stk),1), 
-        "macd_hist": round(_last(macd_h),4),
-        "macd_slope": macd_slope,
-        "ma5": round(_last(ma5),2), 
-        "ma20": round(_last(ma20),2), 
-        "ma60": round(_last(ma60),2),
-        "volume": int(_last(v)), 
-        "vol_ma20": int(_last(v.rolling(20).mean())),
-        "high_52w": round(float(c.rolling(min(252,n)).max().iloc[-1]),2), 
-        "low_52w": round(float(c.rolling(min(252,n)).min().iloc[-1]),2),
-        "_last_h": float(h.iloc[-1]),
-        "_last_l": float(l.iloc[-1])
-    }
+    diff = c.diff()
+    gain = diff.clip(lower=0).rolling(14).mean()
+    loss = (-diff.clip(upper=0)).rolling(14).mean()
+    df['rsi'] = 100 - (100 / (1 + gain / loss.replace(0, 1e-10)))
+    
+    bb_m = df['ma20']
+    bb_s = c.rolling(20).std()
+    bb_u, bb_l = bb_m + 2*bb_s, bb_m - 2*bb_s
+    df['bb_pct'] = (c - bb_l) / (bb_u - bb_l + 1e-10)
+    
+    vol_ma20 = v.rolling(20).mean()
+    df['vol_ratio'] = v / vol_ma20.replace(0, 1)
+    
+    high_52w = c.rolling(252, min_periods=1).max()
+    low_52w = c.rolling(252, min_periods=1).min()
+    df['pos_52w'] = (c - low_52w) / (high_52w - low_52w + 1e-10)
+    
+    # 目標標籤 (Label): 未來 3 天內最高價是否超過今日收盤價 2%
+    future_high = h.shift(-3).rolling(3).max()
+    df['target'] = ((future_high / c - 1) > 0.02).astype(int)
+    
+    return df.dropna()
 
-    vr = ind["volume"] / max(ind["vol_ma20"], 1)
-    ind["vol_ratio"] = round(vr, 2)
-    pos = (price - ind["low_52w"]) / max(ind["high_52w"] - ind["low_52w"], 0.01) * 100
-    ind["position_52w"] = round(pos, 1)
-
-    rv, kv, mv = ind["rsi"], ind["stoch_k"], ind["macd_hist"]
-    if ind["ma5"] > ind["ma20"] > ind["ma60"] and rv > 55 and mv > 0: ind["status"] = "強勢多頭 📈"
-    elif ind["ma5"] < ind["ma20"] < ind["ma60"] and rv < 45 and mv < 0: ind["status"] = "強勢空頭 📉"
-    elif rv <= 30 and kv < 20: ind["status"] = "雙重超賣 🟡"
-    elif rv >= 70 and kv > 80: ind["status"] = "雙重超買 🟡"
-    elif abs(ind["ma5"] - ind["ma20"]) / max(price, 0.01) < 0.015: ind["status"] = "盤整蓄勢 ⚪"
-    elif ind["ma5"] > ind["ma20"] and rv > 50: ind["status"] = "短線偏多 🔵"
-    else: ind["status"] = "方向不明 🟠"
-    return ind
+def train_and_predict(all_dfs: dict):
+    """將全市場數據聚合，訓練隨機森林模型，並預測最新勝率"""
+    print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] ⚙️ 正在建構機器學習特徵與訓練模型...")
+    features = ['dist_ma20', 'macd_hist', 'macd_slope', 'rsi', 'bb_pct', 'vol_ratio', 'pos_52w']
+    
+    train_data_list = []
+    latest_data_dict = {}
+    
+    for sym, df in all_dfs.items():
+        if len(df) < 60: continue
+        feat_df = calc_ml_features(df)
+        if len(feat_df) < 5: continue
+        
+        # 排除最後 3 天作為訓練集 (因為標籤是未來 3 天，最後 3 天是未知)
+        train_data_list.append(feat_df.iloc[:-3])
+        # 保留最後 1 筆作為預測輸入
+        latest_data_dict[sym] = feat_df.iloc[-1:][features]
+        
+    if not train_data_list: return {}
+    
+    full_train_df = pd.concat(train_data_list)
+    X_train = full_train_df[features]
+    y_train = full_train_df['target']
+    
+    # 訓練隨機森林
+    model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42, n_jobs=-1)
+    model.fit(X_train, y_train)
+    
+    # 預測全市場最新勝率
+    win_probs = {}
+    for sym, X_latest in latest_data_dict.items():
+        prob = model.predict_proba(X_latest)[0][1] # 取類別 1 (上漲) 的機率
+        win_probs[sym] = round(prob * 100, 1)
+        
+    return win_probs
 
 def get_full_universe():
-    print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 1. 正在向 FinMind 獲取全市場最新標的清單...")
     try:
         from FinMind.data import DataLoader
-        dl = DataLoader()
-        df = dl.taiwan_stock_info()
+        df = DataLoader().taiwan_stock_info()
         df = df[df['type'].isin(['twse', 'tpex'])]
-        
         universe = {"個股": {}, "被動式ETF": {}, "主動式ETF": {}}
         for _, row in df.iterrows():
             sym, name, ind = str(row['stock_id']), str(row['stock_name']), str(row['industry_category'])
             full_sym = f"{sym}.TW" if row['type'] == 'twse' else f"{sym}.TWO"
-            
             if ind == 'ETF' or sym.startswith('00'):
                 if sym.endswith('A'): universe["主動式ETF"][full_sym] = name
                 else: universe["被動式ETF"][full_sym] = name
-            else:
-                if len(sym) == 4 and sym.isdigit(): universe["個股"][full_sym] = name
+            elif len(sym) == 4 and sym.isdigit(): universe["個股"][full_sym] = name
         return universe
-    except Exception as e:
-        print(f"獲取全市場清單失敗: {e}")
-        return None
-
-def analyze_and_score(df, sym, name, category, update_time):
-    ind = calc_indicators(df)
-    
-    # 預測隔日動能：收盤強勢度 (是否收在最高點附近)
-    close_strength = (ind["price"] - ind["_last_l"]) / max((ind["_last_h"] - ind["_last_l"]), 0.01)
-    dt_score = min(100, int((ind["vol_ratio"] * 15) + (close_strength * 30) + (20 if ind["price"] > ind["vwap"] else 0) + (10 if ind["macd_slope"] > 0 else 0)))
-    dt_reason = f"收盤接近最高點({close_strength*100:.0f}%)" if close_strength > 0.8 else "量能爆發" if ind["vol_ratio"] > 2 else "動能普通"
-    if ind["price"] > ind["vwap"]: dt_reason += "，且站上法人均價(VWAP)"
-
-    # 預測短期波段：MACD 動能加速且均線多頭
-    st_score = min(100, int((35 if ind["ma5"] > ind["ma20"] else 0) + (35 if ind["macd_slope"] > 0 else 0) + (15 if 40 <= ind["rsi"] <= 70 else 0) + (ind["stoch_k"] * 0.15)))
-    st_reason = "均線多頭排列" if ind["ma5"] > ind["ma20"] else "均線震盪中"
-    st_reason += "，且 MACD 動能正在擴大加速" if ind["macd_slope"] > 0 else "，但動能未見顯著加速"
-
-    # 預測長線存股：站穩季線且乖離不大
-    lt_score = min(100, int((40 if ind["price"] > ind["ma60"] else 0) + (30 if 20 <= ind["position_52w"] <= 80 else 10) + (30 if ind["ma20"] > ind["ma60"] else 0)))
-    lt_reason = "長期趨勢向上(月線>季線)" if ind["ma20"] > ind["ma60"] else "長期趨勢偏弱"
-    lt_reason += f"，目前位階適中({ind['position_52w']:.0f}%)" if 20 <= ind["position_52w"] <= 80 else "，但目前價格偏高/偏低"
-
-    total_score = round(dt_score * 0.2 + st_score * 0.4 + lt_score * 0.4, 1)
-
-    return {
-        "sym": sym.replace(".TW", "").replace(".TWO", ""), 
-        "name": name, 
-        "category": category,
-        "score": total_score, 
-        "dt_score": dt_score, 
-        "st_score": st_score, 
-        "lt_score": lt_score,
-        "dt_reason": dt_reason,
-        "st_reason": st_reason,
-        "lt_reason": lt_reason,
-        "status": ind["status"], 
-        "source": "Yahoo Finance (批次掃描)",
-        "update_time": update_time
-    }
+    except Exception as e: return None
 
 def generate_leaderboard():
     universe = get_full_universe()
-    if not universe:
-        print("無法取得清單，排程延後執行。")
-        return
+    if not universe: return
         
     all_tickers = [sym for cat in universe.values() for sym in cat.keys()]
-    print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 2. 開始批次下載 {len(all_tickers)} 檔標的歷史數據 (顯示進度條)...")
+    print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 📥 開始批次下載 {len(all_tickers)} 檔歷史數據...")
+    data = yf.download(all_tickers, period="6mo", group_by="ticker", threads=True, progress=False)
     
-    # 開啟 yfinance 進度條
-    data = yf.download(all_tickers, period="6mo", group_by="ticker", threads=True, progress=True)
+    # 整理有效 DataFrame 供 ML 使用
+    valid_dfs = {}
+    for sym in all_tickers:
+        try:
+            df = data[sym] if len(all_tickers) > 1 else data
+            if "Close" in df.columns and len(df.dropna(subset=["Close"])) >= 60:
+                valid_dfs[sym] = df.dropna(subset=["Close"])
+        except: continue
+
+    # 執行 ML 預測
+    ml_win_probs = train_and_predict(valid_dfs)
     update_time = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    db_records = []
     
-    print(f"\n[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 3. 資料下載完成，開始進行 AI 策略演算評分...")
-    
-    all_results = {"個股": [], "被動式ETF": [], "主動式ETF": []}
+    print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 🧠 進行指標評分與資料庫寫入...")
     for category, symbols_dict in universe.items():
         for sym, name in symbols_dict.items():
-            try:
-                df = data[sym] if len(all_tickers) > 1 else data
-                if "Close" not in df.columns: continue
-                df = df.dropna(subset=["Close"])
-                if len(df) < 20: continue 
-                
-                # 基礎流動性過濾
-                vol_check = df["Volume"].iloc[-1]
-                if pd.isna(vol_check) or (vol_check < 500 and category == "個股"): continue
-                
-                res = analyze_and_score(df, sym, name, category, update_time)
-                all_results[category].append(res)
-            except: continue
+            if sym not in valid_dfs or sym not in ml_win_probs: continue
             
-    # 擴展為 Top 50
-    final_lb = {cat: sorted(items, key=lambda x: x["score"], reverse=True)[:50] for cat, items in all_results.items()}
-    with open("leaderboard.json", "w", encoding="utf-8") as f:
-        json.dump(final_lb, f, ensure_ascii=False, indent=4)
-    print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] ✅ 全市場排行榜更新完成！已寫入 leaderboard.json")
+            df = valid_dfs[sym]
+            c = float(df["Close"].iloc[-1])
+            vol = float(df["Volume"].iloc[-1])
+            if vol < 500 and category == "個股": continue # 流動性過濾
+            
+            # 使用最新的一筆特徵計算傳統分數 (沿用 V7.7 邏輯保留相容性)
+            ma5, ma20, ma60 = df["Close"].rolling(5).mean().iloc[-1], df["Close"].rolling(20).mean().iloc[-1], df["Close"].rolling(60).mean().iloc[-1]
+            vwap = ((df["High"]+df["Low"]+df["Close"])/3*df["Volume"]).rolling(20).sum().iloc[-1] / (df["Volume"].rolling(20).sum().iloc[-1]+1e-10)
+            vol_ratio = vol / (df["Volume"].rolling(20).mean().iloc[-1] + 1)
+            
+            close_strength = (c - df["Low"].iloc[-1]) / max((df["High"].iloc[-1] - df["Low"].iloc[-1]), 0.01)
+            dt_score = min(100, int((vol_ratio * 15) + (close_strength * 30) + (20 if c > vwap else 0)))
+            st_score = min(100, int(35 if ma5 > ma20 else 0))
+            lt_score = min(100, int(40 if c > ma60 else 0))
+            total_score = round(dt_score * 0.2 + st_score * 0.4 + lt_score * 0.4, 1)
+            
+            db_records.append({
+                "symbol": sym.replace(".TW", "").replace(".TWO", ""),
+                "name": name,
+                "category": category,
+                "total_score": total_score,
+                "ml_win_prob": ml_win_probs[sym],
+                "dt_score": dt_score,
+                "st_score": st_score,
+                "lt_score": lt_score,
+                "dt_reason": f"AI 勝率預測: {ml_win_probs[sym]}%",
+                "st_reason": f"量比: {vol_ratio:.1f}x",
+                "lt_reason": "技術面強度" if ma20 > ma60 else "空頭排列",
+                "status": "AI 分析完成",
+                "update_time": update_time
+            })
+            
+    # 寫入 Supabase (使用 upsert 避免主鍵衝突)
+    if db_records:
+        try:
+            supabase.table("ai_leaderboard").upsert(db_records).execute()
+            print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] ✅ 成功寫入 {len(db_records)} 筆紀錄至 Supabase！")
+        except Exception as e:
+            print(f"寫入資料庫失敗: {e}")
 
 if __name__ == "__main__":
     while True:
