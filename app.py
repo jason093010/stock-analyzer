@@ -1,5 +1,5 @@
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║  股市小白分析系統 Pro  V7.2  ─  大滿配終極版 (修復亂碼與上櫃備援)   ║
+# ║  股市小白分析系統 Pro  V7.3  ─  富果API整合版 (含盤中即時報價)      ║
 # ║  Taiwan Color: RED=漲  GREEN=跌  |  當沖/短線/長線 三維度決策整合   ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 import streamlit as st
@@ -16,6 +16,8 @@ import hashlib
 import base64
 import json
 import os
+import requests
+import textwrap
 from datetime import datetime, date, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from cryptography.fernet import Fernet
@@ -31,9 +33,14 @@ except ImportError:
 TW_TZ = timezone(timedelta(hours=8))
 
 # ══════════════════════════════════════════════
+# 0. 全域常數與 API 金鑰設定
+# ══════════════════════════════════════════════
+FUGLE_API_KEY = "ZWU4MDYwOTYtM2M0NC00YWNhLTkwYjMtOGEyMzYzOWE5NDQ0IGExOTkzODI1LWZhZjQtNGE1My1hYzNjLWY1MzEwMTEzNGFiYQ=="
+
+# ══════════════════════════════════════════════
 # 1. 頁面設定與 CSS
 # ══════════════════════════════════════════════
-st.set_page_config(page_title="股市小白分析系統 Pro V7.2", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="股市小白分析系統 Pro V7.3", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -70,8 +77,7 @@ except Exception:
 _DEFS = dict(
     user_id=None, username=None, logged_in=False, _pin="", api_key="", 
     watchlist=[], alerts={}, portfolio={}, trade_history=[], recent_searches=[], 
-    quick_sym="", auto_analyze=False, confirm_clear_watch=False, confirm_clear_port=False, 
-    confirm_clear_trades=False, macro_regime="未知", macro_auto_tried=False, cash_balance=100000.0
+    quick_sym="", auto_analyze=False, macro_regime="未知", macro_auto_tried=False, cash_balance=100000.0
 )
 
 for k, v in _DEFS.items():
@@ -139,25 +145,6 @@ def db_del_wl(uid,sym):
     try: _supabase.table("watchlists").delete().eq("user_id",uid).eq("symbol",sym).execute()
     except: pass
 
-def db_load_alerts(uid):
-    if not HAS_DB: return {}
-    try: return {x["symbol"]:{"above":x.get("above_price"),"below":x.get("below_price")} for x in _supabase.table("alerts").select("*").eq("user_id",uid).execute().data}
-    except: return {}
-
-def db_save_alert(uid,sym,above,below):
-    if not HAS_DB: return
-    try:
-        d={"user_id":uid,"symbol":sym,"above_price":above or None,"below_price":below or None}
-        ex=_supabase.table("alerts").select("id").eq("user_id",uid).eq("symbol",sym).execute()
-        if ex.data: _supabase.table("alerts").update(d).eq("user_id",uid).eq("symbol",sym).execute()
-        else: _supabase.table("alerts").insert(d).execute()
-    except: pass
-
-def db_del_alert(uid,sym):
-    if not HAS_DB: return
-    try: _supabase.table("alerts").delete().eq("user_id",uid).eq("symbol",sym).execute()
-    except: pass
-
 def db_load_port(uid):
     if not HAS_DB: return {}
     try:
@@ -180,11 +167,6 @@ def db_del_port_by_id(uid, db_id):
     try: _supabase.table("portfolio").delete().eq("id", db_id).eq("user_id", uid).execute()
     except: pass
 
-def db_del_port(uid, sym):
-    if not HAS_DB: return
-    try: _supabase.table("portfolio").delete().eq("user_id", uid).eq("symbol", sym).execute()
-    except: pass
-
 def db_load_trades(uid):
     if not HAS_DB: return []
     try: return _supabase.table("trade_history").select("*").eq("user_id",uid).order("created_at",desc=True).execute().data
@@ -202,11 +184,6 @@ def db_add_trade(uid,sym,direction,entry_price,exit_price,shares,entry_date,exit
         }).execute()
     except: pass
 
-def db_del_trade(uid,trade_id):
-    if not HAS_DB: return
-    try: _supabase.table("trade_history").delete().eq("id",trade_id).eq("user_id",uid).execute()
-    except: pass
-
 # ══════════════════════════════════════════════
 # 4. 靜態資料與工具函數
 # ══════════════════════════════════════════════
@@ -222,26 +199,6 @@ US_HOT = {
     "AI/半導": [("AMD","超微"),("TSM","台積電ADR"),("SMCI","超微電腦"),("PLTR","Palantir")],
     "ETF":     [("SPY","S&P500"),("QQQ","那斯達克"),("VT","全球"),("ARKK","方舟")],
     "其他":    [("TSLA","特斯拉"),("AMZN","亞馬遜"),("META","Meta"),("NFLX","Netflix")],
-}
-
-GLOSSARY = {
-    "RSI":"相對強弱指標0~100。>70超買(漲太快)，<30超賣(跌太多)。",
-    "MACD":"動能指標。柱狀圖正值=動能增強；負值=動能減弱。",
-    "布林通道":"股價正常波動範圍。通道收窄=大行情即將爆發。",
-    "ATR":"每天平均波動多少錢。ATR大=風險高；小=比較穩。",
-    "Stochastic KD":"K>80超買，K<20超賣。",
-    "OBV能量潮":"OBV上升=資金流入；下降=資金流出。",
-    "VWAP":"機構法人的成本均價，現價>VWAP=多方強勢。",
-    "費波那契":"黃金比例支撐壓力位，0.618是最重要的位置。",
-    "本益比PE":"花多少錢買1元獲利，越低可能越便宜。",
-    "ROE":"公司用你的錢賺錢的效率，越高越好。",
-    "停損":"跌到設定價位就出場，保護本金最重要工具。",
-    "風報比":"預期獲利÷預期虧損，至少要2:1以上。",
-    "MDD最大回撤":"從最高點到最低點的最大跌幅，衡量最壞情況。",
-    "蒙地卡羅":"用歷史波動率隨機模擬未來數千條可能路徑，顯示機率區間。",
-    "VIX恐慌指數":">30=市場極度恐慌；<15=市場過度樂觀。",
-    "處置效應":"散戶常見心理偏誤: 太早賣出獲利股，太晚出清虧損股。",
-    "總體宏觀制度":"指當前全球經濟所處的大環境，如通膨衰退、復甦成長等，影響所有資產走向。",
 }
 
 MACRO_REGIMES = ["未知","成長擴張(Risk-On)","通膨衰退(Stagflation)","衰退(Risk-Off)","復甦反彈(Early Cycle)","流動性危機"]
@@ -262,19 +219,93 @@ def add_recent(sym: str):
     r.insert(0, sym)
     st.session_state.recent_searches = r[:8]
 
-def fmt_large(v):
-    if not isinstance(v,(int,float)): return str(v)
-    if abs(v)>=1e12: return f"{v/1e12:.2f}兆"
-    if abs(v)>=1e8:  return f"{v/1e8:.2f}億"
-    if abs(v)>=1e4:  return f"{v/1e4:.0f}萬"
-    return f"{v:,.2f}"
-
 # ══════════════════════════════════════════════
-# 5. 數據抓取模組 (FinMind 備援強化)
+# 5. 數據抓取模組 (富果 Fugle 優先 > FinMind > yfinance)
 # ══════════════════════════════════════════════
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_data(symbol: str, period: str):
     err_msg = ""
+    is_tw = symbol.endswith(".TW") or symbol.endswith(".TWO") or symbol.isdigit()
+    tw_sym = symbol.replace(".TW", "").replace(".TWO", "")
+
+    # 1. 富果 Fugle API (台股優先，包含歷史 K 線與即時報價)
+    if is_tw and FUGLE_API_KEY:
+        try:
+            days_map = {"3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
+            days = days_map.get(period, 180)
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days)
+            
+            headers = {"X-API-KEY": FUGLE_API_KEY}
+            params = {
+                "timeframe": "D",
+                "from": start_date.strftime("%Y-%m-%d"),
+                "to": end_date.strftime("%Y-%m-%d")
+            }
+            
+            # A. 獲取歷史 K 線
+            url = f"https://openapi.fugle.tw/marketdata/v1.0/stock/historical/candles/{tw_sym}"
+            resp = requests.get(url, params=params, headers=headers, timeout=10)
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                if "data" in data and data["data"]:
+                    df = pd.DataFrame(data["data"])
+                    df = df.rename(columns={"date":"Date", "open":"Open", "high":"High", "low":"Low", "close":"Close", "volume":"Volume"})
+                    df["Date"] = pd.to_datetime(df["Date"])
+                    df = df.set_index("Date").sort_index()
+                    
+                    # B. 獲取盤中即時報價，並更新至 DataFrame 尾端
+                    quote_url = f"https://openapi.fugle.tw/marketdata/v1.0/stock/intraday/quote/{tw_sym}"
+                    q_resp = requests.get(quote_url, headers=headers, timeout=5)
+                    if q_resp.status_code == 200:
+                        q_data = q_resp.json()
+                        today_str = q_data.get("date")
+                        if today_str:
+                            today_dt = pd.to_datetime(today_str)
+                            c_price = q_data.get("closePrice", q_data.get("previousClose", 0))
+                            o_price = q_data.get("openPrice", c_price)
+                            h_price = q_data.get("highPrice", c_price)
+                            l_price = q_data.get("lowPrice", c_price)
+                            vol = q_data.get("total", {}).get("tradeVolume", 0)
+                            
+                            if c_price > 0:
+                                df.loc[today_dt] = {"Open": o_price, "High": h_price, "Low": l_price, "Close": c_price, "Volume": vol}
+                    
+                    if not df.empty:
+                        # C. 嘗試取得標的資訊 (產業分類等)
+                        info = {'longName': symbol, 'sector': '台股', 'raw_yield': 0.0, 'fetch_time': datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S"), 'source': 'Fugle 富果 (含即時)'}
+                        try:
+                            ticker_url = f"https://openapi.fugle.tw/marketdata/v1.0/stock/intraday/ticker/{tw_sym}"
+                            t_resp = requests.get(ticker_url, headers=headers, timeout=5)
+                            if t_resp.status_code == 200:
+                                t_data = t_resp.json()
+                                info['longName'] = t_data.get("name", symbol)
+                                info['sector'] = t_data.get("industry", "台股")
+                        except: pass
+                        
+                        return df, info, None
+        except Exception as e:
+            err_msg += f"Fugle API 失效: {str(e)[:50]} | "
+
+    # 2. FinMind API (台股備援)
+    if is_tw:
+        try:
+            from FinMind.data import DataLoader
+            dl = DataLoader()
+            days = {"3mo": 90, "6mo": 180, "1y": 365, "2y": 730}.get(period, 180)
+            start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+            fm_data = dl.taiwan_stock_daily(stock_id=tw_sym, start_date=start_date)
+            if not fm_data.empty:
+                fm_data = fm_data.rename(columns={"date": "Date", "open": "Open", "max": "High", "min": "Low", "close": "Close", "Trading_Volume": "Volume"})
+                fm_data["Date"] = pd.to_datetime(fm_data["Date"])
+                fm_data = fm_data.set_index("Date")
+                info = {'longName': symbol, 'sector': '台股', 'raw_yield': 0.0, 'fetch_time': datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S"), 'source': 'FinMind (備援)'}
+                return fm_data, info, None
+        except Exception as fm_e:
+            err_msg += f"FinMind 失效: {str(fm_e)[:50]} | "
+
+    # 3. Yahoo Finance (美股主力 / 台股最後備援)
     try:
         h = yf.download(symbol, period=period, progress=False)
         if h is not None and not h.empty:
@@ -286,44 +317,17 @@ def fetch_data(symbol: str, period: str):
                     t = yf.Ticker(symbol)
                     info['longName'] = t.info.get('longName', symbol)
                     info['sector'] = t.info.get('sector', '其他')
-                    info['trailingPE'] = t.info.get('trailingPE', 'N/A')
-                    info['forwardPE'] = t.info.get('forwardPE', 'N/A')
-                    info['marketCap'] = t.info.get('marketCap', 'N/A')
                     dy = t.info.get('dividendYield', 'N/A')
-                    if isinstance(dy, float):
-                        info['dividendYield'] = f"{dy * 100:.2f}%"
-                        info['raw_yield'] = dy
-                    else:
-                        info['dividendYield'] = 'N/A'
-                        info['raw_yield'] = 0.0
+                    info['raw_yield'] = dy if isinstance(dy, float) else 0.0
                 except: 
                     info = {'longName': symbol, 'sector': '其他', 'raw_yield': 0.0}
                 info['fetch_time'] = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S")
                 info['source'] = 'Yahoo Finance'
                 return h, info, None
-    except Exception as e:
-        err_msg = str(e)
+    except Exception as yf_e:
+        err_msg += f"YF 失效: {str(yf_e)[:50]}"
 
-    # 針對台股與上櫃 ETF (.TWO) 自動啟用 FinMind 備援
-    if symbol.endswith(".TW") or symbol.endswith(".TWO"):
-        try:
-            from FinMind.data import DataLoader
-            dl = DataLoader()
-            days_map = {"3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
-            days = days_map.get(period, 180)
-            start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-            tw_sym = symbol.replace(".TW", "").replace(".TWO", "")
-            fm_data = dl.taiwan_stock_daily(stock_id=tw_sym, start_date=start_date)
-            if not fm_data.empty:
-                fm_data = fm_data.rename(columns={"date": "Date", "open": "Open", "max": "High", "min": "Low", "close": "Close", "Trading_Volume": "Volume"})
-                fm_data["Date"] = pd.to_datetime(fm_data["Date"])
-                fm_data = fm_data.set_index("Date")
-                info = {'longName': symbol, 'sector': '其他', 'raw_yield': 0.0, 'fetch_time': datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S"), 'source': 'FinMind (備援機制)'}
-                return fm_data, info, None
-        except Exception as fm_e:
-            return None, None, f"備援 API (FinMind) 亦失效: {str(fm_e)[:50]}"
-            
-    return None, None, f"抓取失敗: {err_msg[:50]}"
+    return None, None, f"抓取失敗: {err_msg}"
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_news(symbol: str):
@@ -354,28 +358,6 @@ def fetch_market_overview():
             except: continue
     except: pass
     return sorted(rows, key=lambda x: list(syms.keys()).index(x["名稱"])) if rows else []
-
-@st.cache_data(ttl=60, show_spinner=False)
-def fetch_batch_quotes(symbols: tuple) -> dict:
-    if not symbols: return {}
-    results = {}
-    try:
-        data = yf.download(list(symbols), period="5d", group_by="ticker", progress=False)
-        if data is None or data.empty: return {sym: (None, None) for sym in symbols}
-        for sym in symbols:
-            try:
-                df = data[sym] if len(symbols)>1 else data
-                if isinstance(df.columns, pd.MultiIndex): df.columns = [c[0] for c in df.columns]
-                if "Close" in df.columns:
-                    df_clean = df["Close"].dropna()
-                    if len(df_clean) >= 2:
-                        c1, c2 = float(df_clean.iloc[-2]), float(df_clean.iloc[-1])
-                        results[sym] = (round(c2, 2), round((c2 - c1) / max(c1, 0.01) * 100, 2))
-                    else: results[sym] = (None, None)
-                else: results[sym] = (None, None)
-            except: results[sym] = (None, None)
-    except: results = {sym: (None, None) for sym in symbols}
-    return results
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_heatmap_data(market: str) -> pd.DataFrame:
@@ -741,11 +723,6 @@ def ai_bias_warning(bias_data: dict, trades_summary: str, api_key: str) -> str:
     prompt = f"Diagnose biases. Win rate: {bias_data.get('win_rate')}%, Disposition: {bias_data.get('disposition_effect')}. Trades: {trades_summary}. Traditional Chinese. Format: ## 🧠 診斷\n- ..."
     return call_ai(api_key, prompt, use_search=False)
 
-@st.cache_data(ttl=10800, show_spinner=False)
-def ai_chat_assistant(query: str, base_data: str, api_key: str) -> str:
-    prompt = f"Friendly stock assistant. Context: {base_data}\nUser: {query}\nExtremely concise, plain Traditional Chinese."
-    return call_ai(api_key, prompt, use_search=False)
-
 # ══════════════════════════════════════════════
 # 10. 圖表建構 (台灣色系: 紅漲綠跌)
 # ══════════════════════════════════════════════
@@ -885,15 +862,16 @@ with st.sidebar:
 
     st.divider()
     st.header("🌍 宏觀制度設定")
-    if api_key and st.session_state.macro_sel == MACRO_REGIMES[0] and not st.session_state.macro_auto_tried:
+    if api_key and st.session_state.macro_regime == MACRO_REGIMES[0] and not st.session_state.macro_auto_tried:
         st.session_state.macro_auto_tried = True
         with st.spinner("自動偵測宏觀制度中..."):
             try:
                 regime_rpt = ai_macro_regime(api_key)
                 for r in MACRO_REGIMES[1:]:
-                    if r in regime_rpt: st.session_state.macro_sel = r; break
+                    if r in regime_rpt: st.session_state.macro_regime = r; break
             except: pass
-    macro_regime = st.selectbox("當前宏觀制度", MACRO_REGIMES, key="macro_sel")
+    macro_regime = st.selectbox("當前宏觀制度", MACRO_REGIMES, index=MACRO_REGIMES.index(st.session_state.macro_regime))
+    st.session_state.macro_regime = macro_regime
 
     st.divider()
     st.header("⭐ 自選股")
@@ -915,8 +893,8 @@ with st.sidebar:
 # ══════════════════════════════════════════════
 # 12. 主頁面 (戰情室)
 # ══════════════════════════════════════════════
-st.title("📈 股市小白分析系統 Pro V7.2")
-st.caption("完整無刪減版 × FinMind 上櫃備援 × 高級動態排行榜")
+st.title("📈 股市小白分析系統 Pro V7.3")
+st.caption("富果 Fugle 即時串接 × FinMind 上櫃備援 × 高級動態排行榜")
 
 mkt = fetch_market_overview()
 if mkt:
@@ -1047,7 +1025,7 @@ with TABS[0]:
                     with debate_tab3: st.markdown(judge_rpt)
 
 # ==========================================
-# 分頁 2: AI 評分排行榜 (具備防呆與多分類渲染)
+# 分頁 2: AI 評分排行榜 (修復渲染亂碼)
 # ==========================================
 with TABS[1]:
     st.markdown("""
@@ -1080,7 +1058,6 @@ with TABS[1]:
         except Exception:
             full_lb_data = {}
             
-        # 防呆機制：確保讀到的是字典而非舊版清單
         if isinstance(full_lb_data, dict):
             cat_data = full_lb_data.get(lb_cat, [])
         else:
@@ -1093,7 +1070,8 @@ with TABS[1]:
             for idx, item in enumerate(cat_data):
                 medal = "🥇" if idx == 0 else "🥈" if idx == 1 else "🥉" if idx == 2 else f'<span style="color:#64748b;font-size:18px;">{idx+1}</span>'
                 
-                st.markdown(f"""
+                # 使用 textwrap.dedent 確保 HTML 標籤無多餘縮排，防止 Markdown 將其誤認為程式碼區塊
+                html_content = textwrap.dedent(f"""
                 <div class="lb-card">
                     <div class="lb-header">
                         <div class="lb-title">
@@ -1120,7 +1098,8 @@ with TABS[1]:
                         💡 <b>入榜主要原因：</b> {item.get('reason','')} <span style="float:right;font-size:11px;color:#64748b;">更新時間：{item.get('update_time','')}</span>
                     </div>
                 </div>
-                """, unsafe_allow_html=True)
+                """)
+                st.markdown(html_content, unsafe_allow_html=True)
     else:
         st.warning("⚠️ 尚未建立排行榜資料庫 (leaderboard.json)！請先在終端機執行 `python background_worker.py`。")
 
@@ -1180,13 +1159,12 @@ with TABS[3]:
                 total_c = sum(e.get("cost", 0) * e.get("shares", 0) for e in entries)
                 avg_c = round(total_c / total_s, 2) if total_s > 0 else 0
                 try:
-                    hh2 = yf.Ticker(sym).history(period="5d")
-                    if "Close" in hh2.columns and not hh2["Close"].dropna().empty:
+                    hh2, info2, err2 = fetch_data(sym, "1mo")
+                    if hh2 is not None and not hh2.empty:
                         cp2 = round(float(hh2["Close"].dropna().iloc[-1]), 2)
                         pnl_pct = round((cp2 - avg_c) / max(avg_c, 0.01) * 100, 2)
                         v2, c2 = round(cp2 * total_s, 0), round(total_c, 0)
-                        try: sec = yf.Ticker(sym).info.get("sector", "其他") or "其他"
-                        except: sec = "其他"
+                        sec = info2.get("sector", "其他") if info2 else "其他"
                         sector_map[sym] = sec
                         pr_rows.append({"代號": sym, "均價": avg_c, "現價": cp2, "損益%": f"{pnl_pct:+.2f}%", "總損益": f"{v2-c2:+,.0f}", "總股數": total_s, "板塊": sec})
                         tc_all += c2
@@ -1349,4 +1327,4 @@ with TABS[6]:
                     st.markdown(bias_rpt)
 
 st.divider()
-st.caption("📈 股市小白分析系統 Pro V7.2 | 完全自用無限制版")
+st.caption("📈 股市小白分析系統 Pro V7.3 | 完全自用無限制版")

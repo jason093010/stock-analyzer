@@ -2,7 +2,7 @@ import json
 import time
 import pandas as pd
 from datetime import datetime, timezone, timedelta
-from app import fetch_data, calc_indicators
+from app import fetch_data, calc_indicators, FUGLE_API_KEY
 
 TW_TZ = timezone(timedelta(hours=8))
 
@@ -61,6 +61,9 @@ def analyze_asset(sym, name, category):
 
 def generate_leaderboard():
     print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 開始執行全市場分類掃描...")
+    if FUGLE_API_KEY:
+        print("🟢 已啟用 富果 (Fugle) API 模式")
+        
     all_results = {"個股": [], "被動式ETF": [], "主動式ETF": []}
     
     for category, symbols_dict in UNIVERSE.items():
@@ -68,7 +71,7 @@ def generate_leaderboard():
         for sym, name in symbols_dict.items():
             res = analyze_asset(sym, name, category)
             if res: all_results[category].append(res)
-            time.sleep(2) # 遵守速率限制
+            time.sleep(1.5) # 遵守 API 速率限制
             
     final_lb = {}
     for cat, items in all_results.items():
