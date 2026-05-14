@@ -90,7 +90,7 @@ def generate_leaderboard():
     all_tickers = [sym for cat in universe.values() for sym in cat.keys()]
     print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 2. 開始批次下載 {len(all_tickers)} 檔標的歷史數據 (多線程併發)...")
     
-    data = yf.download(all_tickers, period="6mo", group_by="ticker", threads=True, progress=False)
+    data = yf.download(all_tickers, period="6mo", group_by="ticker", threads=True, progress=True)
     print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 3. 資料下載完成，開始進行 AI 策略演算評分...")
     
     all_results = {"個股": [], "被動式ETF": [], "主動式ETF": []}
