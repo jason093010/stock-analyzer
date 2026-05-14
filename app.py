@@ -1,5 +1,5 @@
 # ╔═══════════════════════════════════════════════════════════════════╗
-# ║  股市小白分析系統 Pro  V7.0  ─  大滿配終極版 (3小時快取 + 30篇新聞) ║
+# ║  股市小白分析系統 Pro  V7.1  ─  大滿配終極版 (標準排版穩定版)       ║
 # ║  Taiwan Color: RED=漲  GREEN=跌  |  當沖/短線/長線 三維度決策整合   ║
 # ╚═══════════════════════════════════════════════════════════════════╝
 import streamlit as st
@@ -11,7 +11,10 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 from google import genai
 from google.genai import types as genai_types
-import time, hashlib, base64, json
+import time
+import hashlib
+import base64
+import json
 from datetime import datetime, date, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from cryptography.fernet import Fernet
@@ -24,8 +27,12 @@ try:
 except ImportError:
     cookie_controller = None
 
+# 全域設定台灣時區 (UTC+8)
 TW_TZ = timezone(timedelta(hours=8))
 
+# ══════════════════════════════════════════════
+# 1. 頁面設定與 CSS
+# ══════════════════════════════════════════════
 st.set_page_config(page_title="股市小白分析系統 Pro V7", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
@@ -44,6 +51,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ══════════════════════════════════════════════
+# 2. Supabase 與 Session State
+# ══════════════════════════════════════════════
 HAS_DB = False
 _supabase = None
 try:
@@ -53,142 +63,235 @@ try:
     if _url and _key:
         _supabase = create_client(_url, _key)
         HAS_DB = True
-except Exception: pass
+except Exception: 
+    pass
 
 _DEFS = dict(
-    user_id=None, username=None, logged_in=False, _pin="", api_key="", 
-    watchlist=[], alerts={}, portfolio={}, trade_history=[], 
-    recent_searches=[], quick_sym="", auto_analyze=False,
-    confirm_clear_watch=False, confirm_clear_port=False, confirm_clear_trades=False,
-    macro_regime="未知", macro_auto_tried=False, cash_balance=100000.0
+    user_id=None, 
+    username=None, 
+    logged_in=False, 
+    _pin="", 
+    api_key="", 
+    watchlist=[], 
+    alerts={}, 
+    portfolio={}, 
+    trade_history=[], 
+    recent_searches=[], 
+    quick_sym="", 
+    auto_analyze=False,
+    confirm_clear_watch=False, 
+    confirm_clear_port=False, 
+    confirm_clear_trades=False,
+    macro_regime="未知", 
+    macro_auto_tried=False, 
+    cash_balance=100000.0
 )
-for k, v in _DEFS.items():
-    if k not in st.session_state: st.session_state[k] = v
 
+for k, v in _DEFS.items():
+    if k not in st.session_state: 
+        st.session_state[k] = v
+
+# ══════════════════════════════════════════════
+# 3. 加密工具與資料庫函數
+# ══════════════════════════════════════════════
 _SALT = b"tw_stock_pro_v7_salt"
 
 def _derive_key(pin: str) -> bytes:
-    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=_SALT, iterations=390000)
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(), 
+        length=32, 
+        salt=_SALT, 
+        iterations=390000
+    )
     return base64.urlsafe_b64encode(kdf.derive(pin.encode()))
 
-def encrypt_key(api_key: str, pin: str) -> str: return Fernet(_derive_key(pin)).encrypt(api_key.encode()).decode()
-def decrypt_key(token: str, pin: str) -> str:
-    try: return Fernet(_derive_key(pin)).decrypt(token.encode()).decode()
-    except: return ""
+def encrypt_key(api_key: str, pin: str) -> str: 
+    return Fernet(_derive_key(pin)).encrypt(api_key.encode()).decode()
 
-def make_uid(username: str, pin: str) -> str: return hashlib.sha256(f"{username.lower().strip()}:{pin}".encode()).hexdigest()[:20]
+def decrypt_key(token: str, pin: str) -> str:
+    try: 
+        return Fernet(_derive_key(pin)).decrypt(token.encode()).decode()
+    except: 
+        return ""
+
+def make_uid(username: str, pin: str) -> str: 
+    return hashlib.sha256(f"{username.lower().strip()}:{pin}".encode()).hexdigest()[:20]
 
 def db_verify_user(username: str, pin: str):
-    if not HAS_DB: return True, make_uid(username, pin), None
+    if not HAS_DB: 
+        return True, make_uid(username, pin), None
     try:
         uid = make_uid(username, pin)
         r = _supabase.table("users").select("id,encrypted_api_key").eq("username", username.lower().strip()).eq("password_hash", uid).execute()
-        if r.data: return True, uid, r.data[0].get("encrypted_api_key")
+        if r.data: 
+            return True, uid, r.data[0].get("encrypted_api_key")
         return False, None, None
-    except: return False, None, None
+    except: 
+        return False, None, None
 
 def db_create_user(username: str, pin: str):
-    if not HAS_DB: return True, make_uid(username, pin), "本機模式"
+    if not HAS_DB: 
+        return True, make_uid(username, pin), "本機模式"
     try:
         uid = make_uid(username, pin)
         ex = _supabase.table("users").select("id").eq("username", username.lower().strip()).execute()
-        if ex.data: return False, None, "帳號已存在"
+        if ex.data: 
+            return False, None, "帳號已存在"
         _supabase.table("users").insert({"username": username.lower().strip(), "password_hash": uid}).execute()
         return True, uid, "帳號建立成功！"
-    except Exception as e: return False, None, str(e)[:60]
+    except Exception as e: 
+        return False, None, str(e)[:60]
 
 def db_save_enc_key(username: str, pin: str, api_key: str):
-    if not HAS_DB or not api_key: return
+    if not HAS_DB or not api_key: 
+        return
     try:
         token = encrypt_key(api_key, pin)
         _supabase.table("users").update({"encrypted_api_key": token}).eq("username", username.lower().strip()).execute()
-    except: pass
+    except: 
+        pass
 
 def db_load_wl(uid): 
-    if not HAS_DB: return []
-    try: return [x["symbol"] for x in _supabase.table("watchlists").select("symbol").eq("user_id",uid).execute().data]
-    except: return []
+    if not HAS_DB: 
+        return []
+    try: 
+        return [x["symbol"] for x in _supabase.table("watchlists").select("symbol").eq("user_id",uid).execute().data]
+    except: 
+        return []
 
 def db_add_wl(uid,sym):
-    if not HAS_DB: return
+    if not HAS_DB: 
+        return
     try:
         if not _supabase.table("watchlists").select("id").eq("user_id",uid).eq("symbol",sym).execute().data:
             _supabase.table("watchlists").insert({"user_id":uid,"symbol":sym}).execute()
-    except: pass
+    except: 
+        pass
 
 def db_del_wl(uid,sym):
-    if not HAS_DB: return
-    try: _supabase.table("watchlists").delete().eq("user_id",uid).eq("symbol",sym).execute()
-    except: pass
+    if not HAS_DB: 
+        return
+    try: 
+        _supabase.table("watchlists").delete().eq("user_id",uid).eq("symbol",sym).execute()
+    except: 
+        pass
 
 def db_load_alerts(uid):
-    if not HAS_DB: return {}
-    try: return {x["symbol"]:{"above":x.get("above_price"),"below":x.get("below_price")} for x in _supabase.table("alerts").select("*").eq("user_id",uid).execute().data}
-    except: return {}
+    if not HAS_DB: 
+        return {}
+    try: 
+        return {x["symbol"]:{"above":x.get("above_price"),"below":x.get("below_price")} for x in _supabase.table("alerts").select("*").eq("user_id",uid).execute().data}
+    except: 
+        return {}
 
 def db_save_alert(uid,sym,above,below):
-    if not HAS_DB: return
+    if not HAS_DB: 
+        return
     try:
         d={"user_id":uid,"symbol":sym,"above_price":above or None,"below_price":below or None}
         ex=_supabase.table("alerts").select("id").eq("user_id",uid).eq("symbol",sym).execute()
-        if ex.data: _supabase.table("alerts").update(d).eq("user_id",uid).eq("symbol",sym).execute()
-        else: _supabase.table("alerts").insert(d).execute()
-    except: pass
+        if ex.data: 
+            _supabase.table("alerts").update(d).eq("user_id",uid).eq("symbol",sym).execute()
+        else: 
+            _supabase.table("alerts").insert(d).execute()
+    except: 
+        pass
 
 def db_del_alert(uid,sym):
-    if not HAS_DB: return
-    try: _supabase.table("alerts").delete().eq("user_id",uid).eq("symbol",sym).execute()
-    except: pass
+    if not HAS_DB: 
+        return
+    try: 
+        _supabase.table("alerts").delete().eq("user_id",uid).eq("symbol",sym).execute()
+    except: 
+        pass
 
 def db_load_port(uid):
-    if not HAS_DB: return {}
+    if not HAS_DB: 
+        return {}
     try:
         data = _supabase.table("portfolio").select("*").eq("user_id", uid).execute().data
         port = {}
         for x in data:
             sym = x["symbol"]
-            if sym not in port: port[sym] = []
+            if sym not in port: 
+                port[sym] = []
             port[sym].append({"db_id": x["id"], "cost": x["cost_price"], "shares": x["shares"], "note": x.get("note",""), "buy_date": x.get("buy_date","")})
         return port
-    except: return {}
+    except: 
+        return {}
 
 def db_save_port(uid, sym, cost, shares, note="", buy_date=""):
-    if not HAS_DB: return
-    try: _supabase.table("portfolio").insert({"user_id": uid, "symbol": sym, "cost_price": cost, "shares": shares, "note": note, "buy_date": buy_date}).execute()
-    except: pass
+    if not HAS_DB: 
+        return
+    try: 
+        _supabase.table("portfolio").insert({"user_id": uid, "symbol": sym, "cost_price": cost, "shares": shares, "note": note, "buy_date": buy_date}).execute()
+    except: 
+        pass
 
 def db_del_port_by_id(uid, db_id):
-    if not HAS_DB: return
-    try: _supabase.table("portfolio").delete().eq("id", db_id).eq("user_id", uid).execute()
-    except: pass
+    if not HAS_DB: 
+        return
+    try: 
+        _supabase.table("portfolio").delete().eq("id", db_id).eq("user_id", uid).execute()
+    except: 
+        pass
+
+def db_del_port(uid, sym):
+    if not HAS_DB: 
+        return
+    try: 
+        _supabase.table("portfolio").delete().eq("user_id", uid).eq("symbol", sym).execute()
+    except: 
+        pass
 
 def db_load_trades(uid):
-    if not HAS_DB: return []
-    try: return _supabase.table("trade_history").select("*").eq("user_id",uid).order("created_at",desc=True).execute().data
-    except: return []
+    if not HAS_DB: 
+        return []
+    try: 
+        return _supabase.table("trade_history").select("*").eq("user_id",uid).order("created_at",desc=True).execute().data
+    except: 
+        return []
 
 def db_add_trade(uid,sym,direction,entry_price,exit_price,shares,entry_date,exit_date,note=""):
-    if not HAS_DB: return
+    if not HAS_DB: 
+        return
     try:
         pnl_amt = round((exit_price-entry_price)*shares*(1 if direction=="LONG" else -1),2)
         pnl_pct = round((exit_price-entry_price)/max(entry_price,0.01)*100*(1 if direction=="LONG" else -1),2)
         _supabase.table("trade_history").insert({
-            "user_id":uid,"symbol":sym,"direction":direction, "entry_price":entry_price,"exit_price":exit_price,"shares":shares,
-            "entry_date":entry_date,"exit_date":exit_date, "pnl_amount":pnl_amt,"pnl_pct":pnl_pct,"note":note
+            "user_id":uid,
+            "symbol":sym,
+            "direction":direction, 
+            "entry_price":entry_price,
+            "exit_price":exit_price,
+            "shares":shares,
+            "entry_date":entry_date,
+            "exit_date":exit_date, 
+            "pnl_amount":pnl_amt,
+            "pnl_pct":pnl_pct,
+            "note":note
         }).execute()
-    except: pass
+    except: 
+        pass
 
 def db_del_trade(uid,trade_id):
-    if not HAS_DB: return
-    try: _supabase.table("trade_history").delete().eq("id",trade_id).eq("user_id",uid).execute()
-    except: pass
+    if not HAS_DB: 
+        return
+    try: 
+        _supabase.table("trade_history").delete().eq("id",trade_id).eq("user_id",uid).execute()
+    except: 
+        pass
 
+# ══════════════════════════════════════════════
+# 4. 靜態資料與工具函數
+# ══════════════════════════════════════════════
 TW_HOT = {
     "半導體": [("2330","台積電"),("2454","聯發科"),("2303","聯電"),("3711","日月光")],
     "ETF":    [("0050","台灣50"),("0056","高股息"),("00878","永續高息"),("00929","科技優息")],
     "金融":   [("2882","國泰金"),("2881","富邦金"),("2891","中信金"),("2884","玉山金")],
     "傳產":   [("1301","台塑"),("2002","中鋼"),("2412","中華電"),("1216","統一")],
 }
+
 US_HOT = {
     "科技":    [("AAPL","蘋果"),("MSFT","微軟"),("NVDA","輝達"),("GOOGL","Google")],
     "AI/半導": [("AMD","超微"),("TSM","台積電ADR"),("SMCI","超微電腦"),("PLTR","Palantir")],
@@ -220,36 +323,53 @@ MACRO_REGIMES = ["未知","成長擴張(Risk-On)","通膨衰退(Stagflation)","�
 
 def get_sym(raw: str, market: str) -> str:
     raw = raw.strip().upper()
-    if "台股" in market and not raw.endswith(".TW"): return raw + ".TW"
+    if "台股" in market and not raw.endswith(".TW"): 
+        return raw + ".TW"
     return raw
 
 def safe_f(val, default=0.0) -> float:
     try:
         v = float(val)
         return v if v == v else default
-    except: return default
+    except: 
+        return default
 
 def add_recent(sym: str):
     r = st.session_state.recent_searches
-    if sym in r: r.remove(sym)
+    if sym in r: 
+        r.remove(sym)
     r.insert(0, sym)
     st.session_state.recent_searches = r[:8]
 
 def fmt_large(v):
-    if not isinstance(v,(int,float)): return str(v)
-    if abs(v)>=1e12: return f"{v/1e12:.2f}兆"
-    if abs(v)>=1e8:  return f"{v/1e8:.2f}億"
-    if abs(v)>=1e4:  return f"{v/1e4:.0f}萬"
+    if not isinstance(v,(int,float)): 
+        return str(v)
+    if abs(v)>=1e12: 
+        return f"{v/1e12:.2f}兆"
+    if abs(v)>=1e8:  
+        return f"{v/1e8:.2f}億"
+    if abs(v)>=1e4:  
+        return f"{v/1e4:.0f}萬"
     return f"{v:,.2f}"
 
+# ══════════════════════════════════════════════
+# 5. 數據抓取模組
+# ══════════════════════════════════════════════
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_data(symbol: str, period: str):
     try:
         h = yf.download(symbol, period=period, progress=False)
-        if h is None or h.empty: return None, None, "查無此代號或暫無數據"
-        if isinstance(h.columns, pd.MultiIndex): h.columns = [col[0] for col in h.columns]
-        if "Close" in h.columns: h = h.dropna(subset=["Close"])
-        if h.empty: return None, None, "查無有效數據或逢休市無資料"
+        if h is None or h.empty: 
+            return None, None, "查無此代號或暫無數據"
+            
+        if isinstance(h.columns, pd.MultiIndex): 
+            h.columns = [col[0] for col in h.columns]
+            
+        if "Close" in h.columns: 
+            h = h.dropna(subset=["Close"])
+            
+        if h.empty: 
+            return None, None, "查無有效數據或逢休市無資料"
             
         info = {}
         try:
@@ -261,6 +381,7 @@ def fetch_data(symbol: str, period: str):
             info['priceToBook'] = t.info.get('priceToBook', 'N/A')
             info['beta'] = t.info.get('beta', 'N/A')
             info['marketCap'] = t.info.get('marketCap', 'N/A')
+            
             dy = t.info.get('dividendYield', 'N/A')
             if isinstance(dy, float):
                 info['dividendYield'] = f"{dy * 100:.2f}%"
@@ -281,9 +402,12 @@ def fetch_news(symbol: str):
     try:
         t = yf.Ticker(symbol)
         news = t.news
-        if not news: return []
+        if not news: 
+            return []
+        # 提取最新 30 篇新聞供情緒判讀
         return [{"title": n.get("title",""), "publisher": n.get("publisher","")} for n in news[:30]]
-    except: return []
+    except: 
+        return []
 
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_market_overview():
@@ -295,166 +419,318 @@ def fetch_market_overview():
         for name, sym in syms.items():
             try:
                 df = data[sym] if len(tickers)>1 else data
-                if isinstance(df.columns, pd.MultiIndex): df.columns = [c[0] for c in df.columns]
+                if isinstance(df.columns, pd.MultiIndex): 
+                    df.columns = [c[0] for c in df.columns]
+                    
                 if "Close" in df.columns:
                     df_clean = df["Close"].dropna()
                     if len(df_clean) >= 2:
-                        c1 = float(df_clean.iloc[-2]); c2 = float(df_clean.iloc[-1])
+                        c1 = float(df_clean.iloc[-2])
+                        c2 = float(df_clean.iloc[-1])
                         rows.append({"名稱":name, "現值":round(c2, 2), "漲跌%":round((c2 - c1) / max(c1, 0.01) * 100, 2)})
-            except: continue
-    except: pass
+            except: 
+                continue
+    except: 
+        pass
     return sorted(rows, key=lambda x: list(syms.keys()).index(x["名稱"])) if rows else []
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_batch_quotes(symbols: tuple) -> dict:
-    if not symbols: return {}
+    if not symbols: 
+        return {}
     results = {}
     try:
         data = yf.download(list(symbols), period="5d", group_by="ticker", progress=False)
-        if data is None or data.empty: return {sym: (None, None) for sym in symbols}
+        if data is None or data.empty: 
+            return {sym: (None, None) for sym in symbols}
+            
         for sym in symbols:
             try:
                 df = data[sym] if len(symbols)>1 else data
-                if isinstance(df.columns, pd.MultiIndex): df.columns = [c[0] for c in df.columns]
+                if isinstance(df.columns, pd.MultiIndex): 
+                    df.columns = [c[0] for c in df.columns]
+                    
                 if "Close" in df.columns:
                     df_clean = df["Close"].dropna()
                     if len(df_clean) >= 2:
-                        c1 = float(df_clean.iloc[-2]); c2 = float(df_clean.iloc[-1])
+                        c1 = float(df_clean.iloc[-2])
+                        c2 = float(df_clean.iloc[-1])
                         results[sym] = (round(c2, 2), round((c2 - c1) / max(c1, 0.01) * 100, 2))
-                    else: results[sym] = (None, None)
-                else: results[sym] = (None, None)
-            except: results[sym] = (None, None)
-    except: results = {sym: (None, None) for sym in symbols}
+                    else: 
+                        results[sym] = (None, None)
+                else: 
+                    results[sym] = (None, None)
+            except: 
+                results[sym] = (None, None)
+    except: 
+        results = {sym: (None, None) for sym in symbols}
+        
     return results
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_heatmap_data(market: str) -> pd.DataFrame:
     hot = TW_HOT if "台股" in market else US_HOT
-    tickers = []; sym_map = {}
+    tickers = []
+    sym_map = {}
     for sector, stocks in hot.items():
         for sym_, name_ in stocks:
             full = sym_+".TW" if "台股" in market and not sym_.endswith(".TW") else sym_
-            tickers.append(full); sym_map[full] = (sector, name_)
+            tickers.append(full)
+            sym_map[full] = (sector, name_)
+            
     rows = []
-    if not tickers: return pd.DataFrame()
+    if not tickers: 
+        return pd.DataFrame()
+        
     try:
         data = yf.download(tickers, period="5d", group_by="ticker", progress=False)
         for full in tickers:
             try:
                 df = data[full] if len(tickers)>1 else data
-                if isinstance(df.columns, pd.MultiIndex): df.columns = [c[0] for c in df.columns]
+                if isinstance(df.columns, pd.MultiIndex): 
+                    df.columns = [c[0] for c in df.columns]
+                    
                 if "Close" in df.columns:
                     df_clean = df["Close"].dropna()
                     if len(df_clean) >= 2:
-                        c1 = float(df_clean.iloc[-2]); c2 = float(df_clean.iloc[-1])
+                        c1 = float(df_clean.iloc[-2])
+                        c2 = float(df_clean.iloc[-1])
                         if c1 > 0:
                             sector, name = sym_map[full]
                             rows.append({"板塊": sector, "名稱": name, "代號": full.replace(".TW",""), "漲跌%": round((c2 - c1) / c1 * 100, 2), "市值": 1e9})
-            except: continue
-    except: pass
+            except: 
+                continue
+    except: 
+        pass
+        
     return pd.DataFrame(rows)
 
+# ══════════════════════════════════════════════
+# 6. 多週期量化指標計算
+# ══════════════════════════════════════════════
 def calc_indicators(hist: pd.DataFrame) -> dict:
-    c = hist["Close"].astype(float); h = hist["High"].astype(float); l = hist["Low"].astype(float); v = hist["Volume"].astype(float)
+    c = hist["Close"].astype(float)
+    h = hist["High"].astype(float)
+    l = hist["Low"].astype(float)
+    v = hist["Volume"].astype(float)
     n = len(c)
+
     def _last(s):
         try:
             val = float(s.iloc[-1])
             return val if val==val else 0.0
-        except: return 0.0
+        except: 
+            return 0.0
 
-    ma5 = c.rolling(5).mean(); ma20 = c.rolling(20).mean(); ma60 = c.rolling(min(60,n)).mean()
-    ema12 = c.ewm(span=12,adjust=False).mean(); ema26 = c.ewm(span=26,adjust=False).mean(); macd = ema12-ema26; macd_s = macd.ewm(span=9,adjust=False).mean(); macd_h = macd-macd_s
-    d = c.diff(); gain = d.clip(lower=0).rolling(14).mean(); loss = (-d.clip(upper=0)).rolling(14).mean(); rsi = (100-100/(1+gain/loss.replace(0,1e-10))).clip(0,100)
-    r_min = rsi.rolling(14).min(); r_max = rsi.rolling(14).max(); stk = (100*(rsi-r_min)/(r_max-r_min+1e-10)).clip(0,100); std_ = stk.rolling(3).mean()
-    bb_m = c.rolling(20).mean(); bb_s = c.rolling(20).std(); bb_u = bb_m+2*bb_s; bb_l = bb_m-2*bb_s; bb_pct = ((c-bb_l)/(bb_u-bb_l+1e-10)*100).clip(0,100); bb_w = ((bb_u-bb_l)/(bb_m+1e-10)*100)
-    pc = c.shift(1); tr = pd.concat([(h-l),(h-pc).abs(),(l-pc).abs()],axis=1).max(axis=1); atr = tr.rolling(14).mean()
-    obv = (v*((c.diff()>0).astype(float)*2-1)).fillna(0).cumsum(); hh = h.rolling(14).max(); ll_ = l.rolling(14).min(); wr = (-100*(hh-c)/(hh-ll_+1e-10)).clip(-100,0)
-    tp = (h+l+c)/3; vwap = (tp*v).rolling(20).sum()/(v.rolling(20).sum()+1e-10)
-    price = round(_last(c),2); atr_v = round(_last(atr),4)
-    if atr_v==0: atr_v = round(price*0.02,2)
+    ma5 = c.rolling(5).mean()
+    ma20 = c.rolling(20).mean()
+    ma60 = c.rolling(min(60,n)).mean()
+    
+    ema12 = c.ewm(span=12,adjust=False).mean()
+    ema26 = c.ewm(span=26,adjust=False).mean()
+    macd = ema12-ema26
+    macd_s = macd.ewm(span=9,adjust=False).mean()
+    macd_h = macd-macd_s
+
+    d = c.diff()
+    gain = d.clip(lower=0).rolling(14).mean()
+    loss = (-d.clip(upper=0)).rolling(14).mean()
+    rsi = (100-100/(1+gain/loss.replace(0,1e-10))).clip(0,100)
+
+    r_min = rsi.rolling(14).min()
+    r_max = rsi.rolling(14).max()
+    stk = (100*(rsi-r_min)/(r_max-r_min+1e-10)).clip(0,100)
+    std_ = stk.rolling(3).mean()
+
+    bb_m = c.rolling(20).mean()
+    bb_s = c.rolling(20).std()
+    bb_u = bb_m+2*bb_s
+    bb_l = bb_m-2*bb_s
+    bb_pct = ((c-bb_l)/(bb_u-bb_l+1e-10)*100).clip(0,100)
+    bb_w = ((bb_u-bb_l)/(bb_m+1e-10)*100)
+
+    pc = c.shift(1)
+    tr = pd.concat([(h-l),(h-pc).abs(),(l-pc).abs()],axis=1).max(axis=1)
+    atr = tr.rolling(14).mean()
+
+    obv = (v*((c.diff()>0).astype(float)*2-1)).fillna(0).cumsum()
+    hh = h.rolling(14).max()
+    ll_ = l.rolling(14).min()
+    wr = (-100*(hh-c)/(hh-ll_+1e-10)).clip(-100,0)
+    
+    tp = (h+l+c)/3
+    vwap = (tp*v).rolling(20).sum()/(v.rolling(20).sum()+1e-10)
+
+    price = round(_last(c),2)
+    atr_v = round(_last(atr),4)
+    if atr_v==0: 
+        atr_v = round(price*0.02,2)
 
     def chg(k):
         if n>k:
-            ref=safe_f(c.iloc[-(k+1)])
+            ref = safe_f(c.iloc[-(k+1)])
             return round((price-ref)/max(ref,0.01)*100,2)
         return 0.0
 
     ind = {
-        "price":price,"change_pct":chg(1),"change_5d":chg(5),"change_1m":chg(21),
-        "ma5":round(_last(ma5),2),"ma20":round(_last(ma20),2),"ma60":round(_last(ma60),2),"vwap":round(_last(vwap),2),
-        "rsi":round(_last(rsi),1),"stoch_k":round(_last(stk),1),"stoch_d":round(_last(std_),1),"williams_r":round(_last(wr),1),
-        "macd":round(_last(macd),4),"macd_sig":round(_last(macd_s),4),"macd_hist":round(_last(macd_h),4),
-        "atr":atr_v, "bb_upper":round(_last(bb_u),2),"bb_mid":round(_last(bb_m),2),"bb_lower":round(_last(bb_l),2),
-        "bb_pct":round(_last(bb_pct),1),"bb_width":round(_last(bb_w),1),
-        "volume":int(_last(v)),"vol_ma20":int(_last(v.rolling(20).mean())),"obv":round(_last(obv),0),
-        "high_52w":round(float(c.rolling(min(252,n)).max().iloc[-1]),2),"low_52w": round(float(c.rolling(min(252,n)).min().iloc[-1]),2),
-        "_c":c,"_h":h,"_l":l,"_v":v,"_rsi":rsi,"_stk":stk,"_macd":macd,"_macd_sig":macd_s,"_macd_h":macd_h,
-        "_bb_u":bb_u,"_bb_l":bb_l,"_bb_m":bb_m,"_ma5":ma5,"_ma20":ma20,"_ma60":ma60,"_obv":obv,"_hist":hist,
+        "price": price,
+        "change_pct": chg(1),
+        "change_5d": chg(5),
+        "change_1m": chg(21),
+        "ma5": round(_last(ma5),2),
+        "ma20": round(_last(ma20),2),
+        "ma60": round(_last(ma60),2),
+        "vwap": round(_last(vwap),2),
+        "rsi": round(_last(rsi),1),
+        "stoch_k": round(_last(stk),1),
+        "stoch_d": round(_last(std_),1),
+        "williams_r": round(_last(wr),1),
+        "macd": round(_last(macd),4),
+        "macd_sig": round(_last(macd_s),4),
+        "macd_hist": round(_last(macd_h),4),
+        "atr": atr_v, 
+        "bb_upper": round(_last(bb_u),2),
+        "bb_mid": round(_last(bb_m),2),
+        "bb_lower": round(_last(bb_l),2),
+        "bb_pct": round(_last(bb_pct),1),
+        "bb_width": round(_last(bb_w),1),
+        "volume": int(_last(v)),
+        "vol_ma20": int(_last(v.rolling(20).mean())),
+        "obv": round(_last(obv),0),
+        "high_52w": round(float(c.rolling(min(252,n)).max().iloc[-1]),2),
+        "low_52w": round(float(c.rolling(min(252,n)).min().iloc[-1]),2),
+        "_c": c, "_h": h, "_l": l, "_v": v, 
+        "_rsi": rsi, "_stk": stk, 
+        "_macd": macd, "_macd_sig": macd_s, "_macd_h": macd_h,
+        "_bb_u": bb_u, "_bb_l": bb_l, "_bb_m": bb_m, 
+        "_ma5": ma5, "_ma20": ma20, "_ma60": ma60, 
+        "_obv": obv, "_hist": hist,
     }
 
-    vr = ind["volume"]/max(ind["vol_ma20"],1); ind["vol_ratio"] = round(vr,2)
-    if vr >= 2.5: ind["vol_desc"] = f"🔥爆量{vr:.1f}倍均量"
-    elif vr >= 1.5: ind["vol_desc"] = f"📢放量{vr:.1f}倍"
-    elif vr >= 0.8: ind["vol_desc"] = f"📊正常量{vr:.1f}倍"
-    else: ind["vol_desc"] = f"😴縮量{vr:.1f}倍，訊號可信度低"
+    vr = ind["volume"] / max(ind["vol_ma20"], 1)
+    ind["vol_ratio"] = round(vr, 2)
+    
+    if vr >= 2.5: 
+        ind["vol_desc"] = f"🔥爆量{vr:.1f}倍均量"
+    elif vr >= 1.5: 
+        ind["vol_desc"] = f"📢放量{vr:.1f}倍"
+    elif vr >= 0.8: 
+        ind["vol_desc"] = f"📊正常量{vr:.1f}倍"
+    else: 
+        ind["vol_desc"] = f"😴縮量{vr:.1f}倍，訊號可信度低"
 
-    pos = (price-ind["low_52w"])/max(ind["high_52w"]-ind["low_52w"],0.01)*100; ind["position_52w"] = round(pos,1)
+    pos = (price - ind["low_52w"]) / max(ind["high_52w"] - ind["low_52w"], 0.01) * 100
+    ind["position_52w"] = round(pos, 1)
+    
     ind["dt_status"] = "強勢 (站上VWAP且放量)" if price > ind["vwap"] and vr > 1.2 else "弱勢 (VWAP壓制)" if price < ind["vwap"] else "震盪 (貼近VWAP)"
     ind["st_status"] = "偏多 (站上月線且RSI>50)" if ind["ma5"] > ind["ma20"] and ind["rsi"] > 50 else "偏空 (跌破月線且RSI<50)" if ind["ma5"] < ind["ma20"] and ind["rsi"] < 50 else "盤整 (均線糾結或指標分歧)"
     ind["lt_status"] = "多頭格局 (季線之上且強勢)" if price > ind["ma60"] and pos > 50 else "空頭/超賣 (季線之下且弱勢)" if price < ind["ma60"] and pos < 30 else "中性格局 (季線震盪)"
 
-    rv=ind["rsi"]; kv=ind["stoch_k"]; mv=ind["macd_hist"]
-    if ind["ma5"]>ind["ma20"]>ind["ma60"] and rv>55 and mv>0: ind["status"], ind["sc"], ind["status_desc"] = "強勢多頭 📈", "🔴", "均線多頭排列，上漲動能強"
-    elif ind["ma5"]<ind["ma20"]<ind["ma60"] and rv<45 and mv<0: ind["status"], ind["sc"], ind["status_desc"] = "強勢空頭 📉", "🟢", "均線空頭排列，下跌壓力大"
-    elif rv<=30 and kv<20: ind["status"], ind["sc"], ind["status_desc"] = "雙重超賣 🟡", "🟡", "跌很多了，隨時可能出現反彈"
-    elif rv>=70 and kv>80: ind["status"], ind["sc"], ind["status_desc"] = "雙重超買 🟡", "🟡", "漲太多了，短期可能有獲利了結賣壓"
-    elif abs(ind["ma5"]-ind["ma20"])/max(price,0.01)<0.015: ind["status"], ind["sc"], ind["status_desc"] = "盤整蓄勢 ⚪", "⚪", "價格上下震盪，等待出明確方向"
-    elif ind["ma5"]>ind["ma20"] and rv>50: ind["status"], ind["sc"], ind["status_desc"] = "短線偏多 🔵", "🔵", "短期趨勢向上，多方稍微佔優勢"
-    else: ind["status"], ind["sc"], ind["status_desc"] = "方向不明 🟠", "🟠", "走勢疲軟，建議新手先觀望"
+    rv = ind["rsi"]
+    kv = ind["stoch_k"]
+    mv = ind["macd_hist"]
+    
+    if ind["ma5"] > ind["ma20"] > ind["ma60"] and rv > 55 and mv > 0: 
+        ind["status"], ind["sc"], ind["status_desc"] = "強勢多頭 📈", "🔴", "均線多頭排列，上漲動能強"
+    elif ind["ma5"] < ind["ma20"] < ind["ma60"] and rv < 45 and mv < 0: 
+        ind["status"], ind["sc"], ind["status_desc"] = "強勢空頭 📉", "🟢", "均線空頭排列，下跌壓力大"
+    elif rv <= 30 and kv < 20: 
+        ind["status"], ind["sc"], ind["status_desc"] = "雙重超賣 🟡", "🟡", "跌很多了，隨時可能出現反彈"
+    elif rv >= 70 and kv > 80: 
+        ind["status"], ind["sc"], ind["status_desc"] = "雙重超買 🟡", "🟡", "漲太多了，短期可能有獲利了結賣壓"
+    elif abs(ind["ma5"] - ind["ma20"]) / max(price, 0.01) < 0.015: 
+        ind["status"], ind["sc"], ind["status_desc"] = "盤整蓄勢 ⚪", "⚪", "價格上下震盪，等待出明確方向"
+    elif ind["ma5"] > ind["ma20"] and rv > 50: 
+        ind["status"], ind["sc"], ind["status_desc"] = "短線偏多 🔵", "🔵", "短期趨勢向上，多方稍微佔優勢"
+    else: 
+        ind["status"], ind["sc"], ind["status_desc"] = "方向不明 🟠", "🟠", "走勢疲軟，建議新手先觀望"
 
     return ind
 
 def calc_score(ind: dict, info: dict) -> dict:
-    trend = min(30,(8 if ind["ma5"]>ind["ma20"] else 0)+(8 if ind["ma20"]>ind["ma60"] else 0)+(7 if ind["price"]>ind["ma20"] else 0)+(7 if ind["macd_hist"]>0 else 0))
-    rv=ind["rsi"]; kv=ind["stoch_k"]; wrv=ind["williams_r"]
-    mom=min(25,(10 if 50<=rv<=70 else 8 if rv<30 else 5 if 40<=rv<50 else 3)+(8 if 40<=kv<=80 else 5 if kv<20 else 0)+(7 if wrv>-50 else 0))
-    vr=ind["vol_ratio"]
-    vol=min(20,20 if vr>=1.5 and ind["change_pct"]>0 else 15 if vr>=1.2 and ind["change_pct"]>0 else 10 if 0.8<=vr<=1.5 else 5)
-    pos=ind["position_52w"]
-    psc=min(15,15 if 30<=pos<=70 else 12 if pos<20 else 10 if pos<30 or pos<80 else 4)
-    bsc=min(10,10 if 20<=ind["bb_pct"]<=80 else 7 if ind["bb_pct"]<20 else 3)
-    total=trend+mom+vol+psc+bsc
-    if total>=80: grade,gc="A(優秀)","#ff4444"
-    elif total>=65: grade,gc="B(良好)","#ff8800"
-    elif total>=50: grade,gc="C(普通)","#ffcc00"
-    elif total>=35: grade,gc="D(偏弱)","#88cc44"
-    else: grade,gc="E(警示)","#22aa44"
+    trend = min(30, (8 if ind["ma5"] > ind["ma20"] else 0) + (8 if ind["ma20"] > ind["ma60"] else 0) + (7 if ind["price"] > ind["ma20"] else 0) + (7 if ind["macd_hist"] > 0 else 0))
+    rv = ind["rsi"]
+    kv = ind["stoch_k"]
+    wrv = ind["williams_r"]
+    mom = min(25, (10 if 50 <= rv <= 70 else 8 if rv < 30 else 5 if 40 <= rv < 50 else 3) + (8 if 40 <= kv <= 80 else 5 if kv < 20 else 0) + (7 if wrv > -50 else 0))
+    vr = ind["vol_ratio"]
+    vol = min(20, 20 if vr >= 1.5 and ind["change_pct"] > 0 else 15 if vr >= 1.2 and ind["change_pct"] > 0 else 10 if 0.8 <= vr <= 1.5 else 5)
+    pos = ind["position_52w"]
+    psc = min(15, 15 if 30 <= pos <= 70 else 12 if pos < 20 else 10 if pos < 30 or pos < 80 else 4)
+    bsc = min(10, 10 if 20 <= ind["bb_pct"] <= 80 else 7 if ind["bb_pct"] < 20 else 3)
+    total = trend + mom + vol + psc + bsc
+    
+    if total >= 80: 
+        grade, gc = "A(優秀)", "#ff4444"
+    elif total >= 65: 
+        grade, gc = "B(良好)", "#ff8800"
+    elif total >= 50: 
+        grade, gc = "C(普通)", "#ffcc00"
+    elif total >= 35: 
+        grade, gc = "D(偏弱)", "#88cc44"
+    else: 
+        grade, gc = "E(警示)", "#22aa44"
+        
     return {"total":total,"grade":grade,"gc":gc,"trend":trend,"mom":mom,"vol":vol,"pos":psc,"bb":bsc}
 
 def calc_entry(ind: dict, hist: pd.DataFrame) -> dict:
-    c=ind["_c"]; h=ind["_h"]; l=ind["_l"]; price=ind["price"]; atr=max(ind["atr"],price*0.005)
-    n=len(c); w=min(60,n); ph=round(float(h.iloc[-w:].max()),2); pl=round(float(l.iloc[-w:].min()),2)
-    fr=max(ph-pl,atr)
-    fibs={k:round(ph-v*fr,2) for k,v in [("0.236",0.236),("0.382",0.382),("0.500",0.500),("0.618",0.618),("0.786",0.786)]}
-    sup1=round(float(l.iloc[-20:].min()),2); sup2=round(float(l.iloc[-w:].min()),2)
-    res1=round(float(h.iloc[-20:].max()),2); res2=round(float(h.iloc[-w:].max()),2)
-    agg_buy=round(price*0.995,2); mod_buy=round((sup1+ind["ma20"])/2,2); con_buy=round(min(sup1,fibs["0.382"]),2)     
-    sl_tight=round(price-1.5*atr,2); sl_normal=round(price-2.5*atr,2); sl_wide=round(max(sup2*0.97,price-4*atr),2)  
-    tp1=round(price+2*atr,2); tp2=round(price+4*atr,2); tp3=round(max(res2*1.02,price+6*atr),2)
-    rr=round((tp1-mod_buy)/max(mod_buy-sl_normal,0.01),2)
-    return dict(fibs=fibs,sup1=sup1,sup2=sup2,res1=res1,res2=res2, con_buy=con_buy,mod_buy=mod_buy,agg_buy=agg_buy, sl_tight=sl_tight,sl_normal=sl_normal,sl_wide=sl_wide, tp1=tp1,tp2=tp2,tp3=tp3,rr=rr,ph=ph,pl=pl, atr=atr,lot_cost=round(mod_buy*1000,0))
+    c = ind["_c"]
+    h = ind["_h"]
+    l = ind["_l"]
+    price = ind["price"]
+    atr = max(ind["atr"], price * 0.005)
+    n = len(c)
+    w = min(60, n)
+    ph = round(float(h.iloc[-w:].max()), 2)
+    pl = round(float(l.iloc[-w:].min()), 2)
+    fr = max(ph - pl, atr)
+    fibs = {k:round(ph - v * fr, 2) for k,v in [("0.236",0.236),("0.382",0.382),("0.500",0.500),("0.618",0.618),("0.786",0.786)]}
+    sup1 = round(float(l.iloc[-20:].min()), 2)
+    sup2 = round(float(l.iloc[-w:].min()), 2)
+    res1 = round(float(h.iloc[-20:].max()), 2)
+    res2 = round(float(h.iloc[-w:].max()), 2)
+    
+    agg_buy = round(price * 0.995, 2)                 
+    mod_buy = round((sup1 + ind["ma20"]) / 2, 2)        
+    con_buy = round(min(sup1, fibs["0.382"]), 2)     
+    sl_tight = round(price - 1.5 * atr, 2)              
+    sl_normal = round(price - 2.5 * atr, 2)             
+    sl_wide = round(max(sup2 * 0.97, price - 4 * atr), 2)  
+    tp1 = round(price + 2 * atr, 2)
+    tp2 = round(price + 4 * atr, 2)
+    tp3 = round(max(res2 * 1.02, price + 6 * atr), 2)
+    rr = round((tp1 - mod_buy) / max(mod_buy - sl_normal, 0.01), 2)
+    
+    return dict(
+        fibs=fibs, sup1=sup1, sup2=sup2, res1=res1, res2=res2, 
+        con_buy=con_buy, mod_buy=mod_buy, agg_buy=agg_buy, 
+        sl_tight=sl_tight, sl_normal=sl_normal, sl_wide=sl_wide, 
+        tp1=tp1, tp2=tp2, tp3=tp3, rr=rr, ph=ph, pl=pl, 
+        atr=atr, lot_cost=round(mod_buy*1000,0)
+    )
 
 def monte_carlo_simulation(hist: pd.DataFrame, days: int = 30, simulations: int = 2000) -> dict:
     close = hist["Close"].astype(float)
     log_returns = np.log(close / close.shift(1)).dropna()
-    mu = float(log_returns.mean()); sigma = float(log_returns.std()); last_price = float(close.iloc[-1])
-    dt = 1; np.random.seed(42)
+    mu = float(log_returns.mean())
+    sigma = float(log_returns.std())
+    last_price = float(close.iloc[-1])
+    dt = 1
+    np.random.seed(42)
     rand_matrix = np.random.standard_normal((simulations, days))
     price_matrix = np.zeros((simulations, days))
     price_matrix[:, 0] = last_price * np.exp((mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * rand_matrix[:, 0])
-    for t in range(1, days): price_matrix[:, t] = price_matrix[:, t-1] * np.exp((mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * rand_matrix[:, t])
-    percentiles = {"p02": np.percentile(price_matrix, 2.5, axis=0), "p16": np.percentile(price_matrix, 16, axis=0), "p50": np.percentile(price_matrix, 50, axis=0), "p84": np.percentile(price_matrix, 84, axis=0), "p97": np.percentile(price_matrix, 97.5, axis=0)}
+    
+    for t in range(1, days): 
+        price_matrix[:, t] = price_matrix[:, t-1] * np.exp((mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * rand_matrix[:, t])
+        
+    percentiles = {
+        "p02": np.percentile(price_matrix, 2.5, axis=0), 
+        "p16": np.percentile(price_matrix, 16, axis=0), 
+        "p50": np.percentile(price_matrix, 50, axis=0), 
+        "p84": np.percentile(price_matrix, 84, axis=0), 
+        "p97": np.percentile(price_matrix, 97.5, axis=0)
+    }
     future_dates = [hist.index[-1] + timedelta(days=i+1) for i in range(days)]
     return {"dates": future_dates, "pcts": percentiles, "last": last_price, "mu": mu, "sigma": sigma, "matrix_sample": price_matrix[:50]}
 
@@ -463,17 +739,23 @@ def run_screener(symbols: list, conditions: dict) -> list:
     def _check(sym):
         try:
             h, info, err = fetch_data(sym, "3mo")
-            if err or h is None: return None
-            ind = calc_indicators(h); ok = True
+            if err or h is None: 
+                return None
+            ind = calc_indicators(h)
+            ok = True
             if conditions.get("rsi_lt") and ind["rsi"] >= conditions["rsi_lt"]: ok = False
             if conditions.get("rsi_gt") and ind["rsi"] <= conditions["rsi_gt"]: ok = False
             if conditions.get("macd_cross_up") and ind["macd_hist"] <= 0: ok = False
             if conditions.get("above_ma20") and ind["price"] <= ind["ma20"]: ok = False
             if conditions.get("vol_spike") and ind["vol_ratio"] < 1.5: ok = False
             if conditions.get("bb_near_lower") and ind["bb_pct"] > 25: ok = False
-            if ok: return {"代號":sym,"現價":ind["price"],"RSI":ind["rsi"],"MACD_H":ind["macd_hist"],"量比":ind["vol_ratio"],"狀態":ind["status"],"評分":calc_score(ind,info)["total"]}
-        except: pass
+            
+            if ok: 
+                return {"代號":sym,"現價":ind["price"],"RSI":ind["rsi"],"MACD_H":ind["macd_hist"],"量比":ind["vol_ratio"],"狀態":ind["status"],"評分":calc_score(ind,info)["total"]}
+        except: 
+            pass
         return None
+        
     with ThreadPoolExecutor(max_workers=3) as ex:
         futs = [ex.submit(_check,s) for s in symbols]
         for f in as_completed(futs):
@@ -484,44 +766,99 @@ def run_screener(symbols: list, conditions: dict) -> list:
 def run_dca(symbol: str, monthly_amount: float, years: int, market: str):
     bm_sym = "^TWII" if "台股" in market else "^GSPC"
     hist, _, err = fetch_data(symbol, f"{years}y")
-    if err or hist is None: return None, None, err
-    hist = hist.copy(); hist.index = pd.to_datetime(hist.index)
-    if hist.index.tz: hist.index = hist.index.tz_localize(None)
-    hist["ym"] = hist.index.to_period("M"); monthly = hist.groupby("ym").first()
-    recs=[]; total_inv=0.0; total_sh=0.0
+    if err or hist is None: 
+        return None, None, err
+        
+    hist = hist.copy()
+    hist.index = pd.to_datetime(hist.index)
+    if hist.index.tz: 
+        hist.index = hist.index.tz_localize(None)
+    hist["ym"] = hist.index.to_period("M")
+    monthly = hist.groupby("ym").first()
+    
+    recs = []
+    total_inv = 0.0
+    total_sh = 0.0
+    
     for period_lbl, row in monthly.iterrows():
-        price=float(row["Close"])
-        if price<=0: continue
-        total_sh+=monthly_amount/price; total_inv+=monthly_amount
-        recs.append({"date":period_lbl.to_timestamp(),"累積投入":total_inv,"資產現值":total_sh*price})
-    if not recs: return None, None, "無足夠歷史數據"
-    df=pd.DataFrame(recs).set_index("date")
-    fv=df["資產現值"].iloc[-1]; rtn=round((fv-total_inv)/max(total_inv,0.01)*100,2)
-    peak=df["資產現值"].cummax(); dd=(df["資產現值"]-peak)/(peak+1e-10)*100; mdd=round(dd.min(),2)
-    bm_hist, _, _ = fetch_data(bm_sym, f"{years}y"); bm_rtn_str = "N/A"; sharpe_str = "N/A"
+        price = float(row["Close"])
+        if price <= 0: continue
+        total_sh += monthly_amount / price
+        total_inv += monthly_amount
+        recs.append({"date":period_lbl.to_timestamp(), "累積投入":total_inv, "資產現值":total_sh * price})
+        
+    if not recs: 
+        return None, None, "無足夠歷史數據"
+        
+    df = pd.DataFrame(recs).set_index("date")
+    fv = df["資產現值"].iloc[-1]
+    rtn = round((fv - total_inv) / max(total_inv, 0.01) * 100, 2)
+    peak = df["資產現值"].cummax()
+    dd = (df["資產現值"] - peak) / (peak + 1e-10) * 100
+    mdd = round(dd.min(), 2)
+    
+    bm_hist, _, _ = fetch_data(bm_sym, f"{years}y")
+    bm_rtn_str = "N/A"
+    sharpe_str = "N/A"
+    
     if bm_hist is not None and not bm_hist.empty:
         try:
             bm_clean = bm_hist["Close"].dropna()
             if len(bm_clean) > 0:
-                bm_start = float(bm_clean.iloc[0]); bm_end = float(bm_clean.iloc[-1])
-                bm_rtn = ((bm_end - bm_start) / bm_start) * 100; bm_rtn_str = f"{bm_rtn:+.2f}%"
-            daily_returns = hist["Close"].pct_change().dropna(); ann_vol = daily_returns.std() * np.sqrt(252) * 100; ann_rtn = rtn / max(years, 1)
-            if ann_vol > 0: sharpe = (ann_rtn - 2.0) / ann_vol; sharpe_str = f"{sharpe:.2f}"
-        except: pass
-    stats={"總投入本金":round(total_inv,0),"最終資產現值":round(fv,0),"累積報酬率":f"{rtn:+.2f}%","大盤同期報酬": bm_rtn_str,"年化報酬率":f"{rtn/max(years,1):+.2f}%","最大回撤MDD":f"{mdd:.2f}%","夏普值 (Sharpe)": sharpe_str}
+                bm_start = float(bm_clean.iloc[0])
+                bm_end = float(bm_clean.iloc[-1])
+                bm_rtn = ((bm_end - bm_start) / bm_start) * 100
+                bm_rtn_str = f"{bm_rtn:+.2f}%"
+            daily_returns = hist["Close"].pct_change().dropna()
+            ann_vol = daily_returns.std() * np.sqrt(252) * 100
+            ann_rtn = rtn / max(years, 1)
+            if ann_vol > 0: 
+                sharpe = (ann_rtn - 2.0) / ann_vol
+                sharpe_str = f"{sharpe:.2f}"
+        except: 
+            pass
+            
+    stats = {
+        "總投入本金": round(total_inv, 0),
+        "最終資產現值": round(fv, 0),
+        "累積報酬率": f"{rtn:+.2f}%",
+        "大盤同期報酬": bm_rtn_str,
+        "年化報酬率": f"{rtn/max(years,1):+.2f}%",
+        "最大回撤MDD": f"{mdd:.2f}%",
+        "夏普值 (Sharpe)": sharpe_str
+    }
     return df, stats, None
 
 def analyze_behavioral_bias(trades: list) -> dict:
-    if len(trades) < 3: return {}
-    wins  = [t for t in trades if (t.get("pnl_pct") or 0) > 0]; loses = [t for t in trades if (t.get("pnl_pct") or 0) <= 0]
-    if not wins or not loses: return {}
+    if len(trades) < 3: 
+        return {}
+    wins  = [t for t in trades if (t.get("pnl_pct") or 0) > 0]
+    loses = [t for t in trades if (t.get("pnl_pct") or 0) <= 0]
+    if not wins or not loses: 
+        return {}
+        
     def hold_days(t):
-        try: return (date.fromisoformat(t.get("exit_date",""))-date.fromisoformat(t.get("entry_date",""))).days
-        except: return 0
-    avg_win_pct = sum(t.get("pnl_pct",0) for t in wins)/len(wins); avg_loss_pct = sum(abs(t.get("pnl_pct",0)) for t in loses)/len(loses)
-    avg_win_days = sum(hold_days(t) for t in wins)/len(wins); avg_loss_days = sum(hold_days(t) for t in loses)/len(loses)
+        try: 
+            return (date.fromisoformat(t.get("exit_date","")) - date.fromisoformat(t.get("entry_date",""))).days
+        except: 
+            return 0
+            
+    avg_win_pct = sum(t.get("pnl_pct",0) for t in wins) / len(wins)
+    avg_loss_pct = sum(abs(t.get("pnl_pct",0)) for t in loses) / len(loses)
+    avg_win_days = sum(hold_days(t) for t in wins) / len(wins)
+    avg_loss_days = sum(hold_days(t) for t in loses) / len(loses)
     disposition = avg_loss_days > avg_win_days * 1.3 and avg_loss_pct > avg_win_pct
-    return {"win_count": len(wins), "lose_count": len(loses), "avg_win_pct": round(avg_win_pct,2), "avg_loss_pct": round(avg_loss_pct,2), "avg_win_days": round(avg_win_days,1), "avg_loss_days": round(avg_loss_days,1), "disposition_effect": disposition, "win_rate": round(len(wins)/len(trades)*100,1)}
+    
+    return {
+        "win_count": len(wins), 
+        "lose_count": len(loses), 
+        "avg_win_pct": round(avg_win_pct, 2), 
+        "avg_loss_pct": round(avg_loss_pct, 2), 
+        "avg_win_days": round(avg_win_days, 1), 
+        "avg_loss_days": round(avg_loss_days, 1), 
+        "disposition_effect": disposition, 
+        "win_rate": round(len(wins) / len(trades) * 100, 1)
+    }
 
 def backtest_ma_crossover(hist: pd.DataFrame, short_w=5, long_w=20):
     df = hist.copy()
@@ -529,13 +866,17 @@ def backtest_ma_crossover(hist: pd.DataFrame, short_w=5, long_w=20):
     df['SMA_L'] = df['Close'].rolling(long_w).mean()
     df['Signal'] = np.where(df['SMA_S'] > df['SMA_L'], 1, 0)
     df['Position'] = df['Signal'].diff()
-    trades = []; buy_price = 0
+    
+    trades = []
+    buy_price = 0
+    
     for date_val, row in df[df['Position'] != 0].dropna().iterrows():
         if row['Position'] == 1:
             buy_price = row['Close']
         elif row['Position'] == -1 and buy_price != 0:
-            trades.append((row['Close'] - buy_price)/buy_price * 100)
+            trades.append((row['Close'] - buy_price) / buy_price * 100)
             buy_price = 0
+            
     win_rate = sum(1 for t in trades if t > 0) / len(trades) if trades else 0
     total_return = sum(trades) if trades else 0
     return win_rate, total_return, len(trades)
@@ -641,6 +982,7 @@ def ai_three_agent_debate_cached(base_data: str, api_key: str) -> tuple:
     bear_rpt = call_ai(api_key, bear_prompt, use_search=True)
     time.sleep(1.5)
     judge_rpt= call_ai(api_key, judge_prompt, use_search=False)
+    
     return bull_rpt, bear_rpt, judge_rpt
 
 @st.cache_data(ttl=10800, show_spinner=False)
@@ -708,52 +1050,84 @@ TW_UP = "#ff3333"
 TW_DOWN = "#22cc44"
 
 def build_main_chart(hist, ind, entry, sym, mc_data=None, buy_markers=None):
-    idx = hist.index; rows = 4; heights = [0.50, 0.18, 0.17, 0.15]; titles = ["K線+均線+布林(台灣色系: 紅漲綠跌)","成交量","RSI+Stochastic","MACD"]
-    if mc_data: rows = 5; heights = [0.42, 0.18, 0.15, 0.13, 0.12]; titles.append("蒙地卡羅模擬(30日錐形區間)")
+    idx = hist.index
+    rows = 4
+    heights = [0.50, 0.18, 0.17, 0.15]
+    titles = ["K線+均線+布林(台灣色系: 紅漲綠跌)","成交量","RSI+Stochastic","MACD"]
+    
+    if mc_data: 
+        rows = 5
+        heights = [0.42, 0.18, 0.15, 0.13, 0.12]
+        titles.append("蒙地卡羅模擬(30日錐形區間)")
+        
     fig = make_subplots(rows=rows,cols=1,shared_xaxes=True,row_heights=heights,subplot_titles=titles,vertical_spacing=0.03)
+
     fig.add_trace(go.Candlestick(x=idx,open=hist["Open"],high=hist["High"],low=hist["Low"],close=hist["Close"],name="K線",increasing_line_color=TW_UP,decreasing_line_color=TW_DOWN,increasing_fillcolor=TW_UP,decreasing_fillcolor=TW_DOWN),row=1,col=1)
-    for key,color,nm in [("_ma5","#FFA726","MA5"),("_ma20","#42A5F5","MA20"),("_ma60","#AB47BC","MA60")]: fig.add_trace(go.Scatter(x=idx,y=ind[key],line=dict(color=color,width=1.3),name=nm),row=1,col=1)
+    
+    for key,color,nm in [("_ma5","#FFA726","MA5"),("_ma20","#42A5F5","MA20"),("_ma60","#AB47BC","MA60")]: 
+        fig.add_trace(go.Scatter(x=idx,y=ind[key],line=dict(color=color,width=1.3),name=nm),row=1,col=1)
+        
     fig.add_trace(go.Scatter(x=idx,y=ind["_bb_u"],line=dict(color="rgba(255,235,59,0.5)",width=1,dash="dot"),name="布林上",showlegend=False),row=1,col=1)
     fig.add_trace(go.Scatter(x=idx,y=ind["_bb_l"],line=dict(color="rgba(255,235,59,0.5)",width=1,dash="dot"),name="布林下",showlegend=False,fill="tonexty",fillcolor="rgba(255,235,59,0.04)"),row=1,col=1)
-    for y_val,color,label in [(entry["sup1"],"rgba(34,204,68,0.8)",f"短撐 {entry['sup1']}"),(entry["res1"],"rgba(255,51,51,0.8)", f"短壓 {entry['res1']}"),(entry["mod_buy"],"rgba(255,200,50,0.8)",f"波段買 {entry['mod_buy']}")]: fig.add_hline(y=y_val,line_dash="dash",line_color=color,annotation_text=label,annotation_font_size=10,row=1,col=1)
+
+    for y_val,color,label in [(entry["sup1"],"rgba(34,204,68,0.8)",f"短撐 {entry['sup1']}"),(entry["res1"],"rgba(255,51,51,0.8)", f"短壓 {entry['res1']}"),(entry["mod_buy"],"rgba(255,200,50,0.8)",f"波段買 {entry['mod_buy']}")]: 
+        fig.add_hline(y=y_val,line_dash="dash",line_color=color,annotation_text=label,annotation_font_size=10,row=1,col=1)
+        
     if buy_markers:
-        for bm in buy_markers: fig.add_trace(go.Scatter(x=[bm["date"]],y=[bm["price"]],mode="markers+text",marker=dict(symbol="triangle-up",size=14,color="#FFD700",line=dict(color="#FF8C00",width=2)),text=[f"買入\n{bm['price']}"],textposition="bottom center",textfont=dict(color="#FFD700",size=10),name=f"買入 {bm['price']}",showlegend=True),row=1,col=1)
+        for bm in buy_markers: 
+            fig.add_trace(go.Scatter(x=[bm["date"]],y=[bm["price"]],mode="markers+text",marker=dict(symbol="triangle-up",size=14,color="#FFD700",line=dict(color="#FF8C00",width=2)),text=[f"買入\n{bm['price']}"],textposition="bottom center",textfont=dict(color="#FFD700",size=10),name=f"買入 {bm['price']}",showlegend=True),row=1,col=1)
+
     vc = [TW_UP if c>=o else TW_DOWN for c,o in zip(hist["Close"],hist["Open"])]
     fig.add_trace(go.Bar(x=idx,y=ind["_v"],marker_color=vc,showlegend=False),row=2,col=1)
     fig.add_trace(go.Scatter(x=idx,y=ind["_v"].rolling(20).mean(),line=dict(color="#FFA726",width=1.2),showlegend=False),row=2,col=1)
+    
     fig.add_trace(go.Scatter(x=idx,y=ind["_rsi"],line=dict(color="#FF7043",width=1.5),name="RSI",showlegend=False),row=3,col=1)
     fig.add_trace(go.Scatter(x=idx,y=ind["_stk"],line=dict(color="#66BB6A",width=1,dash="dot"),name="StochK",showlegend=False),row=3,col=1)
-    for lv,lc in [(70,"rgba(255,51,51,0.4)"),(50,"rgba(150,150,150,0.3)"),(30,"rgba(34,204,68,0.4)")]: fig.add_hline(y=lv,line_dash="dash",line_color=lc,row=3,col=1)
+    for lv,lc in [(70,"rgba(255,51,51,0.4)"),(50,"rgba(150,150,150,0.3)"),(30,"rgba(34,204,68,0.4)")]: 
+        fig.add_hline(y=lv,line_dash="dash",line_color=lc,row=3,col=1)
+        
     mc_c = [TW_UP if x>=0 else TW_DOWN for x in ind["_macd_h"]]
     fig.add_trace(go.Bar(x=idx,y=ind["_macd_h"],marker_color=mc_c,showlegend=False),row=4,col=1)
     fig.add_trace(go.Scatter(x=idx,y=ind["_macd"],line=dict(color="#42A5F5",width=1),showlegend=False),row=4,col=1)
     fig.add_trace(go.Scatter(x=idx,y=ind["_macd_sig"],line=dict(color="#FF7043",width=1),showlegend=False),row=4,col=1)
+
     if mc_data:
-        mc_row = 5; fd = mc_data["dates"]; p = mc_data["pcts"]
+        mc_row = 5
+        fd = mc_data["dates"]
+        p = mc_data["pcts"]
         fig.add_trace(go.Scatter(x=fd,y=p["p97"],line=dict(color="rgba(255,200,50,0.3)",width=1),showlegend=False,name="95%上界"),row=mc_row,col=1)
         fig.add_trace(go.Scatter(x=fd,y=p["p02"],line=dict(color="rgba(255,200,50,0.3)",width=1),showlegend=False,fill="tonexty",fillcolor="rgba(255,200,50,0.08)"),row=mc_row,col=1)
         fig.add_trace(go.Scatter(x=fd,y=p["p84"],line=dict(color="rgba(100,180,255,0.5)",width=1),showlegend=False,name="68%上界"),row=mc_row,col=1)
         fig.add_trace(go.Scatter(x=fd,y=p["p16"],line=dict(color="rgba(100,180,255,0.5)",width=1),showlegend=False,fill="tonexty",fillcolor="rgba(100,180,255,0.12)"),row=mc_row,col=1)
         fig.add_trace(go.Scatter(x=fd,y=p["p50"],line=dict(color="#FFD700",width=2),name="中位數路徑"),row=mc_row,col=1)
-        for path in mc_data["matrix_sample"][:5]: fig.add_trace(go.Scatter(x=fd,y=path,line=dict(color="rgba(200,200,200,0.1)",width=0.5),showlegend=False),row=mc_row,col=1)
+        for path in mc_data["matrix_sample"][:5]: 
+            fig.add_trace(go.Scatter(x=fd,y=path,line=dict(color="rgba(200,200,200,0.1)",width=0.5),showlegend=False),row=mc_row,col=1)
+
     fig.update_layout(template=DARK,title=f"{sym} 技術分析(🔴漲 🟢跌)",height=900 if mc_data else 780,xaxis_rangeslider_visible=False,legend=dict(orientation="h",y=1.02,font_size=11),margin=dict(l=50,r=50,t=80,b=30))
     return fig
 
 def build_heatmap_chart(df: pd.DataFrame, market: str):
-    if df.empty: return None
+    if df.empty: 
+        return None
     fig = px.treemap(df,path=["板塊","名稱"],values="市值",color="漲跌%",color_continuous_scale=[(0.0,TW_DOWN),(0.5,"#333333"),(1.0,TW_UP)],color_continuous_midpoint=0,custom_data=["代號","漲跌%"],title=f"{'台股' if '台股' in market else '美股'} 板塊熱力圖(🔴漲 🟢跌)",template=DARK)
-    fig.update_traces(texttemplate="<b>%{label}</b><br>%{customdata[1]:.2f}%",textfont_size=13); fig.update_layout(height=550,margin=dict(l=10,r=10,t=60,b=10),coloraxis_colorbar=dict(title="漲跌%"))
+    fig.update_traces(texttemplate="<b>%{label}</b><br>%{customdata[1]:.2f}%",textfont_size=13)
+    fig.update_layout(height=550,margin=dict(l=10,r=10,t=60,b=10),coloraxis_colorbar=dict(title="漲跌%"))
     return fig
 
 def build_portfolio_sunburst(portfolio: dict, sector_map: dict, cash_balance: float) -> go.Figure:
     rows = []
     for sym,data in portfolio.items(): 
         if isinstance(data, list):
-             for entry in data: rows.append({"板塊":sector_map.get(sym,"其他"),"代號":sym,"市值":entry["cost"]*entry["shares"]})
+             for entry in data: 
+                 rows.append({"板塊":sector_map.get(sym,"其他"),"代號":sym,"市值":entry["cost"]*entry["shares"]})
         else:
              rows.append({"板塊":sector_map.get(sym,"其他"),"代號":sym,"市值":data["cost"]*data["shares"]})
+             
     rows.append({"板塊":"現金", "代號":"閒置現金", "市值":cash_balance})
-    if not rows: return None
+    
+    if not rows: 
+        return None
+        
     df = pd.DataFrame(rows)
     fig = px.sunburst(df,path=["板塊","代號"],values="市值",title="資產配置旭日圖(含閒置現金)",template=DARK,color_discrete_sequence=px.colors.qualitative.Set3)
     fig.update_layout(height=450,margin=dict(l=10,r=10,t=60,b=10))
@@ -776,17 +1150,23 @@ with st.sidebar:
     st.divider()
     st.header("👤 個人帳號")
     if not st.session_state.logged_in and cookie_controller is not None:
-        saved_u = cookie_controller.get("tw_stock_u"); saved_p = cookie_controller.get("tw_stock_p")
+        saved_u = cookie_controller.get("tw_stock_u")
+        saved_p = cookie_controller.get("tw_stock_p")
         if saved_u and saved_p:
             ok, uid, enc = db_verify_user(saved_u, saved_p)
             if ok:
-                st.session_state.user_id = uid; st.session_state.username = saved_u; st.session_state._pin = saved_p
-                st.session_state.logged_in = True; st.session_state.watchlist = db_load_wl(uid)
-                st.session_state.alerts = db_load_alerts(uid); st.session_state.portfolio = db_load_port(uid)
+                st.session_state.user_id = uid
+                st.session_state.username = saved_u
+                st.session_state._pin = saved_p
+                st.session_state.logged_in = True
+                st.session_state.watchlist = db_load_wl(uid)
+                st.session_state.alerts = db_load_alerts(uid)
+                st.session_state.portfolio = db_load_port(uid)
                 st.session_state.trade_history = db_load_trades(uid)
                 if enc:
                     dec = decrypt_key(enc, saved_p)
-                    if dec: st.session_state.api_key = dec
+                    if dec: 
+                        st.session_state.api_key = dec
 
     if not st.session_state.logged_in:
         with st.expander("🔐 登入 / 建立帳號", expanded=True):
@@ -798,34 +1178,50 @@ with st.sidebar:
                     if uname.strip() and upin.strip():
                         ok,uid,enc = db_verify_user(uname.strip(),upin.strip())
                         if ok:
-                            st.session_state.user_id=uid; st.session_state.username=uname.strip(); st.session_state._pin=upin.strip(); st.session_state.logged_in=True
-                            st.session_state.watchlist=db_load_wl(uid); st.session_state.alerts=db_load_alerts(uid)
-                            st.session_state.portfolio=db_load_port(uid); st.session_state.trade_history=db_load_trades(uid)
+                            st.session_state.user_id=uid
+                            st.session_state.username=uname.strip()
+                            st.session_state._pin=upin.strip()
+                            st.session_state.logged_in=True
+                            st.session_state.watchlist=db_load_wl(uid)
+                            st.session_state.alerts=db_load_alerts(uid)
+                            st.session_state.portfolio=db_load_port(uid)
+                            st.session_state.trade_history=db_load_trades(uid)
                             if enc:
                                 dec = decrypt_key(enc, upin.strip())
-                                if dec: st.session_state.api_key = dec
+                                if dec: 
+                                    st.session_state.api_key = dec
                             if cookie_controller is not None:
                                 cookie_controller.set("tw_stock_u", uname.strip(), max_age=30*86400)
                                 cookie_controller.set("tw_stock_p", upin.strip(), max_age=30*86400)
-                            st.success(f"✅ 歡迎！"); st.rerun()
-                        else: st.error("❌ 錯誤")
+                            st.success(f"✅ 歡迎！")
+                            st.rerun()
+                        else: 
+                            st.error("❌ 錯誤")
             with cb:
                 if st.button("✨ 建立", use_container_width=True):
                     if uname.strip() and upin.strip():
                         ok,uid,msg = db_create_user(uname.strip(),upin.strip())
                         if ok:
-                            st.session_state.user_id=uid; st.session_state.username=uname.strip(); st.session_state._pin=upin.strip(); st.session_state.logged_in=True
+                            st.session_state.user_id=uid
+                            st.session_state.username=uname.strip()
+                            st.session_state._pin=upin.strip()
+                            st.session_state.logged_in=True
                             if cookie_controller is not None:
                                 cookie_controller.set("tw_stock_u", uname.strip(), max_age=30*86400)
                                 cookie_controller.set("tw_stock_p", upin.strip(), max_age=30*86400)
-                            st.success("✅ 建立成功"); st.rerun()
-                        else: st.error(f"❌ {msg}")
+                            st.success("✅ 建立成功")
+                            st.rerun()
+                        else: 
+                            st.error(f"❌ {msg}")
     else:
         st.success(f"👤 {st.session_state.username}")
         if st.button("🚪 登出", use_container_width=True):
-            for k in ["user_id","username","logged_in","api_key","_pin"]: st.session_state[k] = False if k=="logged_in" else "" if k in ["api_key","_pin"] else None
-            for k in ["watchlist","trade_history"]: st.session_state[k]=[]
-            for k in ["alerts","portfolio"]: st.session_state[k]={}
+            for k in ["user_id","username","logged_in","api_key","_pin"]: 
+                st.session_state[k] = False if k=="logged_in" else "" if k in ["api_key","_pin"] else None
+            for k in ["watchlist","trade_history"]: 
+                st.session_state[k]=[]
+            for k in ["alerts","portfolio"]: 
+                st.session_state[k]={}
             if cookie_controller is not None: 
                 cookie_controller.remove("tw_stock_u")
                 cookie_controller.remove("tw_stock_p")
@@ -835,8 +1231,8 @@ with st.sidebar:
     if st.session_state.logged_in and st.session_state.api_key:
         st.success("🔑 API 金鑰已帶入")
         if st.button("🔄 更換金鑰"): 
-            st.session_state.api_key=""; st.rerun()
-        api_key = "".join(c for c in str(st.session_state.api_key) if ord(c) < 128).strip() if st.session_state.api_key else ""
+            st.session_state.api_key=""
+            st.rerun()
     else:
         api_key_in = st.text_input("🔑 Gemini API 金鑰",type="password",placeholder="AIza...",value=st.session_state.api_key)
         if api_key_in and api_key_in!=st.session_state.api_key:
@@ -853,7 +1249,9 @@ with st.sidebar:
 
     st.divider()
     st.header("🌍 宏觀制度設定")
-    if "macro_sel" not in st.session_state: st.session_state.macro_sel = MACRO_REGIMES[0]
+    if "macro_sel" not in st.session_state: 
+        st.session_state.macro_sel = MACRO_REGIMES[0]
+        
     if api_key and st.session_state.macro_sel == MACRO_REGIMES[0] and not st.session_state.macro_auto_tried:
         st.session_state.macro_auto_tried = True
         with st.spinner("🌍 系統初始化：背景自動偵測全球宏觀制度中..."):
@@ -861,9 +1259,13 @@ with st.sidebar:
                 regime_rpt = ai_macro_regime(api_key)
                 for r in MACRO_REGIMES[1:]:
                     if r in regime_rpt: 
-                        st.session_state.macro_sel = r; break
-            except: pass
+                        st.session_state.macro_sel = r
+                        break
+            except: 
+                pass
+                
     macro_regime = st.selectbox("當前宏觀制度", MACRO_REGIMES, key="macro_sel")
+    
     if api_key and st.button("🔄 手動重新偵測", use_container_width=True):
         with st.spinner("重新搜尋與評估中..."):
             try:
@@ -871,12 +1273,17 @@ with st.sidebar:
                 detected = False
                 for r in MACRO_REGIMES[1:]:
                     if r in regime_rpt: 
-                        st.session_state.macro_sel = r; detected = True; break
+                        st.session_state.macro_sel = r
+                        detected = True
+                        break
                 if detected:
                     st.success(f"✅ 偵測完成: {st.session_state.macro_sel}")
-                    time.sleep(1); st.rerun() 
-                else: st.warning("⚠️ 偵測失敗，請稍後重試")
-            except Exception as e: st.error(str(e)[:50])
+                    time.sleep(1)
+                    st.rerun() 
+                else: 
+                    st.warning("⚠️ 偵測失敗，請稍後重試")
+            except Exception as e: 
+                st.error(str(e)[:50])
 
     st.divider()
     st.header("⭐ 自選股")
@@ -885,24 +1292,29 @@ with st.sidebar:
         sa=get_sym(nw.strip(),market)
         if sa not in st.session_state.watchlist:
             st.session_state.watchlist.append(sa)
-            if st.session_state.logged_in: db_add_wl(st.session_state.user_id,sa)
+            if st.session_state.logged_in: 
+                db_add_wl(st.session_state.user_id,sa)
             st.rerun()
+            
     for i,s in enumerate(st.session_state.watchlist):
         c1,c2=st.columns([4,1])
         c1.write(f"• {s}")
         if c2.button("❌",key=f"dw_{i}_{s}"):
-            if st.session_state.logged_in: db_del_wl(st.session_state.user_id,s)
-            st.session_state.watchlist.pop(i); st.rerun()
+            if st.session_state.logged_in: 
+                db_del_wl(st.session_state.user_id,s)
+            st.session_state.watchlist.pop(i)
+            st.rerun()
 
     st.divider()
     st.header("📖 名詞解釋")
     for term,desc in GLOSSARY.items():
-        with st.expander(term): st.info(desc)
+        with st.expander(term): 
+            st.info(desc)
 
 # ══════════════════════════════════════════════
 # 12. 主頁面 (戰情室)
 # ══════════════════════════════════════════════
-st.title("📈 股市小白分析系統 Pro V7.0")
+st.title("📈 股市小白分析系統 Pro V7.1")
 st.caption("大滿配終極版 × 一鍵平倉 × AI 助教 × 策略回測 × 3小時快取")
 
 mkt = fetch_market_overview()
@@ -917,7 +1329,9 @@ if st.session_state.recent_searches:
     rc=st.columns(min(len(st.session_state.recent_searches),8))
     for i,rs in enumerate(st.session_state.recent_searches):
         if rc[i].button(rs,key=f"rc_{i}"): 
-            st.session_state.quick_sym=rs.replace(".TW",""); st.session_state.auto_analyze=True; st.rerun()
+            st.session_state.quick_sym=rs.replace(".TW","")
+            st.session_state.auto_analyze=True
+            st.rerun()
 
 regime_colors={"成長擴張(Risk-On)":"#cc2222","復甦反彈(Early Cycle)":"#aa3333","通膨衰退(Stagflation)":"#446644","衰退(Risk-Off)":"#228844","流動性危機":"#4422aa","未知":"#444444"}
 rc=regime_colors.get(st.session_state.macro_sel,"#444444")
@@ -934,17 +1348,27 @@ with TABS[0]:
         qcols=st.columns(len(stocks))
         for col,(sym_,name_) in zip(qcols,stocks):
             if col.button(f"{sym_}\n{name_}",use_container_width=True,key=f"qs_{sym_}_{cat}"): 
-                st.session_state.quick_sym=sym_; st.session_state.auto_analyze=True; st.rerun()
+                st.session_state.quick_sym=sym_
+                st.session_state.auto_analyze=True
+                st.rerun()
 
     st.divider()
     ic1,ic2 = st.columns([3,1])
-    with ic1: ticker_in = st.text_input("輸入股票代號",value=st.session_state.quick_sym or "",placeholder="台股如2330，美股如NVDA")
-    with ic2: st.write(""); st.write(""); go_btn = st.button("🔍 開始分析",use_container_width=True,type="primary")
+    with ic1: 
+        ticker_in = st.text_input("輸入股票代號",value=st.session_state.quick_sym or "",placeholder="台股如2330，美股如NVDA")
+    with ic2: 
+        st.write("")
+        st.write("")
+        go_btn = st.button("🔍 開始分析",use_container_width=True,type="primary")
 
-    if "current_sym" not in st.session_state: st.session_state.current_sym = ""
-    if go_btn and ticker_in.strip(): st.session_state.current_sym = ticker_in.strip()
+    if "current_sym" not in st.session_state: 
+        st.session_state.current_sym = ""
+        
+    if go_btn and ticker_in.strip(): 
+        st.session_state.current_sym = ticker_in.strip()
     elif st.session_state.auto_analyze and st.session_state.quick_sym: 
-        st.session_state.current_sym = st.session_state.quick_sym; st.session_state.auto_analyze = False
+        st.session_state.current_sym = st.session_state.quick_sym
+        st.session_state.auto_analyze = False
 
     if st.session_state.current_sym:
         use_sym = st.session_state.current_sym
@@ -953,7 +1377,10 @@ with TABS[0]:
 
         with st.spinner(f"抓取 {sym} 數據..."): 
             hist, info, err = fetch_data(sym, period)
-        if err: st.error(f"❌ {err}"); st.stop()
+            
+        if err: 
+            st.error(f"❌ {err}")
+            st.stop()
 
         ind   = calc_indicators(hist)
         entry = calc_entry(ind, hist)
@@ -969,9 +1396,11 @@ with TABS[0]:
             if sym not in st.session_state.watchlist:
                 if st.button("⭐ 追蹤",use_container_width=True):
                     st.session_state.watchlist.append(sym)
-                    if st.session_state.logged_in: db_add_wl(st.session_state.user_id,sym)
+                    if st.session_state.logged_in: 
+                        db_add_wl(st.session_state.user_id,sym)
                     st.success("✅")
-            else: st.success("⭐ 追蹤中")
+            else: 
+                st.success("⭐ 追蹤中")
 
         st.markdown(f"**🏢 公司基本面:** 總市值 `{fmt_large(info.get('marketCap','N/A'))}` | 預估本益比 `{info.get('forwardPE','N/A')}` | 殖利率 `{info.get('dividendYield','N/A')}`")
 
@@ -981,14 +1410,15 @@ with TABS[0]:
                 if not news_data:
                     st.info("目前沒有抓取到相關新聞。")
                 else:
-                    news_str = "\\n".join([f"- {n['title']} ({n['publisher']})" for n in news_data])
+                    news_str = "\n".join([f"- {n['title']} ({n['publisher']})" for n in news_data])
                     st.caption(f"已抓取 {len(news_data)} 篇最新新聞")
                     if st.button("🤖 AI 一句話解讀新聞情緒"):
                         with st.spinner("AI 閱讀新聞中..."):
                             try:
                                 news_rpt = ai_news_sentiment(news_str, sym, api_key)
                                 st.markdown(f"<div style='background:#1e1e2e;padding:15px;border-left:4px solid #3b82f6;border-radius:8px;'>{news_rpt}</div>", unsafe_allow_html=True)
-                            except Exception as e: st.error("新聞解讀失敗，請稍後再試。")
+                            except Exception as e: 
+                                st.error("新聞解讀失敗，請稍後再試。")
 
         score_col, kpi_col = st.columns([1,2])
         with score_col:
@@ -1033,9 +1463,12 @@ with TABS[0]:
         st.write("")
         with st.expander("💰 詳細操作策略與資金控管計算機", expanded=False):
             e1,e2,e3 = st.columns(3)
-            with e1: st.markdown(f'<div class="entry-card"><div style="color:#66cc66;font-weight:bold">🎯 買入區</div><div style="margin:8px 0;color:#e2e8f0;line-height:2">長線建倉: <b>{entry["con_buy"]}</b><br>波段進場: <b>{entry["mod_buy"]}</b><br>當沖買入: <b>{entry["agg_buy"]}</b></div></div>',unsafe_allow_html=True)
-            with e2: st.markdown(f'<div class="stop-card"><div style="color:#ff6666;font-weight:bold">🛡️ 停損區 (保命用)</div><div style="margin:8px 0;color:#e2e8f0;line-height:2">當沖快跑: <b>{entry["sl_tight"]}</b><br>波段防守: <b>{entry["sl_normal"]}</b><br>長線底線: <b>{entry["sl_wide"]}</b></div></div>',unsafe_allow_html=True)
-            with e3: st.markdown(f'<div class="target-card"><div style="color:#66aaff;font-weight:bold">🎯 停利區 (賺夠就跑)</div><div style="margin:8px 0;color:#e2e8f0;line-height:2">短期目標: <b>{entry["tp1"]}</b><br>中期目標: <b>{entry["tp2"]}</b><br>最終目標: <b>{entry["tp3"]}</b></div></div>',unsafe_allow_html=True)
+            with e1: 
+                st.markdown(f'<div class="entry-card"><div style="color:#66cc66;font-weight:bold">🎯 買入區</div><div style="margin:8px 0;color:#e2e8f0;line-height:2">長線建倉: <b>{entry["con_buy"]}</b><br>波段進場: <b>{entry["mod_buy"]}</b><br>當沖買入: <b>{entry["agg_buy"]}</b></div></div>',unsafe_allow_html=True)
+            with e2: 
+                st.markdown(f'<div class="stop-card"><div style="color:#ff6666;font-weight:bold">🛡️ 停損區 (保命用)</div><div style="margin:8px 0;color:#e2e8f0;line-height:2">當沖快跑: <b>{entry["sl_tight"]}</b><br>波段防守: <b>{entry["sl_normal"]}</b><br>長線底線: <b>{entry["sl_wide"]}</b></div></div>',unsafe_allow_html=True)
+            with e3: 
+                st.markdown(f'<div class="target-card"><div style="color:#66aaff;font-weight:bold">🎯 停利區 (賺夠就跑)</div><div style="margin:8px 0;color:#e2e8f0;line-height:2">短期目標: <b>{entry["tp1"]}</b><br>中期目標: <b>{entry["tp2"]}</b><br>最終目標: <b>{entry["tp3"]}</b></div></div>',unsafe_allow_html=True)
             
             st.markdown("#### ⚖️ 部位規模與被動收入計算")
             st.caption("輸入總資金，系統自動幫您算出「最安全買入股數」與「預期每年領到的股息」。")
@@ -1053,8 +1486,10 @@ with TABS[0]:
             with ps3:
                 st.info(f"建議買入股數:\n### **{int(suggested_shares):,.0f} 股**")
                 st.caption(f"佔用資金約 {total_invested:,.0f} 元")
-                if raw_yield > 0: st.success(f"每年預估股息: **約 {expected_dividend:,.0f} 元**")
-                else: st.warning("此檔目前無穩定配息資料")
+                if raw_yield > 0: 
+                    st.success(f"每年預估股息: **約 {expected_dividend:,.0f} 元**")
+                else: 
+                    st.warning("此檔目前無穩定配息資料")
 
         st.divider()
         st.markdown("### 📈 技術分析圖表")
@@ -1064,21 +1499,26 @@ with TABS[0]:
         buy_markers = []
         if sym in st.session_state.portfolio:
             entries = st.session_state.portfolio[sym]
-            if isinstance(entries, dict): entries = [entries]
-            elif isinstance(entries, str): entries = []
+            if isinstance(entries, dict): 
+                entries = [entries]
+            elif isinstance(entries, str): 
+                entries = []
             for pd2 in entries:
                 if isinstance(pd2, dict) and pd2.get("buy_date"):
                     try:
                         bdate = pd.to_datetime(pd2["buy_date"])
-                        if bdate.tz: bdate = bdate.tz_localize(None)
+                        if bdate.tz: 
+                            bdate = bdate.tz_localize(None)
                         buy_markers.append({"date":bdate,"price":pd2.get("cost")})
-                    except: pass
+                    except: 
+                        pass
 
         st.plotly_chart(build_main_chart(hist,ind,entry,sym,mc_data,buy_markers if buy_markers else None),use_container_width=True)
 
         st.divider()
         st.markdown("### [AI] 多週期三方辯論分析 (3小時內結果秒出)")
-        if not api_key: st.warning("⚠️ 請先於側邊欄設定 Gemini API 金鑰。")
+        if not api_key: 
+            st.warning("⚠️ 請先於側邊欄設定 Gemini API 金鑰。")
         else:
             if st.button("⚔️ 啟動 AI 辯論分析", type="primary"):
                 with st.spinner("AI 快速總結中..."):
@@ -1089,59 +1529,74 @@ with TABS[0]:
                         debate_tab1,debate_tab2,debate_tab3 = st.tabs(["🔴 多頭看漲原因","🟢 空頭看跌原因","🟣 裁判最終判定"])
                         with debate_tab1:
                             st.markdown('<div class="bull-card"><b>🔴 多頭代理人 (負責找買入理由)</b></div>',unsafe_allow_html=True)
-                            secs = bull_rpt.split("\n## "); st.markdown(secs[0])
+                            secs = bull_rpt.split("\n## ")
+                            st.markdown(secs[0])
                             for sec in secs[1:]:
                                 lines = sec.split("\n",1)
-                                with st.expander(f"## {lines[0]}",expanded=True): st.markdown(lines[1] if len(lines)>1 else "")
+                                with st.expander(f"## {lines[0]}",expanded=True): 
+                                    st.markdown(lines[1] if len(lines)>1 else "")
                         with debate_tab2:
                             st.markdown('<div class="bear-card"><b>🟢 空頭代理人 (負責找潛在風險)</b></div>',unsafe_allow_html=True)
-                            secs = bear_rpt.split("\n## "); st.markdown(secs[0])
+                            secs = bear_rpt.split("\n## ")
+                            st.markdown(secs[0])
                             for sec in secs[1:]:
                                 lines = sec.split("\n",1)
-                                with st.expander(f"## {lines[0]}",expanded=True): st.markdown(lines[1] if len(lines)>1 else "")
+                                with st.expander(f"## {lines[0]}",expanded=True): 
+                                    st.markdown(lines[1] if len(lines)>1 else "")
                         with debate_tab3:
                             st.markdown('<div class="judge-card"><b>🟣 投資裁判 (總結給你看)</b></div>',unsafe_allow_html=True)
-                            secs = judge_rpt.split("\n## "); st.markdown(secs[0])
+                            secs = judge_rpt.split("\n## ")
+                            st.markdown(secs[0])
                             for sec in secs[1:]:
                                 lines = sec.split("\n",1)
                                 if "判定" in lines[0] or "建議" in lines[0] or "防守" in lines[0] or "真心話" in lines[0]:
                                     st.markdown(f'<div class="predict-card"><div style="color:#c084fc;font-size:14px;font-weight:bold">## {lines[0]}</div></div>',unsafe_allow_html=True)
                                     st.markdown(lines[1] if len(lines)>1 else "")
                                 else:
-                                    with st.expander(f"## {lines[0]}",expanded=True): st.markdown(lines[1] if len(lines)>1 else "")
-                    except Exception as e: st.error(f"❌ 分析失敗: {str(e)}")
+                                    with st.expander(f"## {lines[0]}",expanded=True): 
+                                        st.markdown(lines[1] if len(lines)>1 else "")
+                    except Exception as e: 
+                        st.error(f"❌ 分析失敗: {str(e)}")
 
         st.divider()
         st.markdown("### 💬 個股專屬 AI 助教 (RAG)")
         st.caption("關於這檔股票有不懂的名詞或策略？直接用白話文問助教！")
         user_q = st.text_input("輸入您的問題", placeholder="例如：RSI 超賣是什麼意思？現在可以進場嗎？")
         if st.button("🙋 問助教") and user_q:
-            if not api_key: st.warning("⚠️ 請先於側邊欄設定 Gemini API 金鑰。")
+            if not api_key: 
+                st.warning("⚠️ 請先於側邊欄設定 Gemini API 金鑰。")
             else:
                 with st.spinner("助教打字中..."):
                     try:
                         base_data_str = f"Symbol: {sym}\nPrice: {ind['price']}\nStatus: {ind['status']}\nRSI: {ind['rsi']}\nMACD: {ind['macd_hist']}\nVolume: {ind.get('vol_desc', 'N/A')}\nSupport: {entry['sup1']}, Resistance: {entry['res1']}"
                         ans = ai_chat_assistant(user_q, base_data_str, api_key)
                         st.info(ans)
-                    except Exception as e: st.error(f"❌ 查詢失敗: {str(e)}")
+                    except Exception as e: 
+                        st.error(f"❌ 查詢失敗: {str(e)}")
 
 with TABS[1]:
     st.markdown("### 🥊 雙股 PK 擂台 (選擇障礙終結者)")
     st.info("不知道該買哪一檔？輸入兩個代號，讓 AI 幫你做深度比較，直接選出贏家！")
     pk_col1, pk_col2 = st.columns(2)
-    with pk_col1: pk_sym1 = st.text_input("選手 A (例如 2330)", placeholder="輸入股票代號")
-    with pk_col2: pk_sym2 = st.text_input("選手 B (例如 2454)", placeholder="輸入股票代號")
+    with pk_col1: 
+        pk_sym1 = st.text_input("選手 A (例如 2330)", placeholder="輸入股票代號")
+    with pk_col2: 
+        pk_sym2 = st.text_input("選手 B (例如 2454)", placeholder="輸入股票代號")
         
     if st.button("⚔️ AI 開打！", type="primary", use_container_width=True):
-        if not api_key: st.error("⚠️ 請先設定 Gemini API 金鑰。")
-        elif not pk_sym1.strip() or not pk_sym2.strip(): st.warning("⚠️ 請輸入兩檔代號。")
+        if not api_key: 
+            st.error("⚠️ 請先設定 Gemini API 金鑰。")
+        elif not pk_sym1.strip() or not pk_sym2.strip(): 
+            st.warning("⚠️ 請輸入兩檔代號。")
         else:
-            p1 = get_sym(pk_sym1.strip(), market); p2 = get_sym(pk_sym2.strip(), market)
+            p1 = get_sym(pk_sym1.strip(), market)
+            p2 = get_sym(pk_sym2.strip(), market)
             with st.spinner(f"🥊 正在為 {p1} 與 {p2} 安排對決，秒抓快取中..."):
                 try:
                     pk_result = ai_stock_pk(p1, p2, api_key)
                     st.markdown(f'<div style="background:linear-gradient(135deg, #1e1e2e, #312e81);border-radius:12px;padding:20px;border:2px solid #6366f1;">{pk_result}</div>', unsafe_allow_html=True)
-                except Exception as e: st.error(f"❌ PK 失敗: {str(e)}")
+                except Exception as e: 
+                    st.error(f"❌ PK 失敗: {str(e)}")
 
 with TABS[2]:
     st.markdown("### 💵 帳戶現金管理")
@@ -1153,52 +1608,81 @@ with TABS[2]:
     with asset_tab1:
         st.markdown("#### ➕ 新增持股記錄")
         p1,p2,p3,p4,p5 = st.columns(5)
-        with p1: ps_ = st.text_input("代號",placeholder="如2330",key="pf_s_")
-        with p2: pc_ = st.number_input("買入成本",0.0,step=0.5,key="pf_c_")
-        with p3: pn_ = st.number_input("持有股數",0.0,step=100.0,key="pf_n_")
-        with p4: pd_ = st.date_input("買入日期",key="pf_d_")
-        with p5: st.write(""); st.write(""); p_btn = st.button("💾 儲存並計算",use_container_width=True,type="primary",key="pf_calc")
+        with p1: 
+            ps_ = st.text_input("代號",placeholder="如2330",key="pf_s_")
+        with p2: 
+            pc_ = st.number_input("買入成本",0.0,step=0.5,key="pf_c_")
+        with p3: 
+            pn_ = st.number_input("持有股數",0.0,step=100.0,key="pf_n_")
+        with p4: 
+            pd_ = st.date_input("買入日期",key="pf_d_")
+        with p5: 
+            st.write("")
+            st.write("")
+            p_btn = st.button("💾 儲存並計算",use_container_width=True,type="primary",key="pf_calc")
 
-        if "show_pf_calc" not in st.session_state: st.session_state.show_pf_calc = False
-        if p_btn: st.session_state.show_pf_calc = True
+        if "show_pf_calc" not in st.session_state: 
+            st.session_state.show_pf_calc = False
+            
+        if p_btn: 
+            st.session_state.show_pf_calc = True
 
         if st.session_state.show_pf_calc and ps_.strip() and pc_>0 and pn_>0:
-            ps_sym=get_sym(ps_.strip(),market)
-            ph_,pi_,pe_=fetch_data(ps_sym,"5d")
+            ps_sym = get_sym(ps_.strip(),market)
+            ph_,pi_,pe_ = fetch_data(ps_sym,"5d")
             
-            if pe_: st.error(f"❌ {pe_}")
+            if pe_: 
+                st.error(f"❌ {pe_}")
             else:
-                cp_=round(float(ph_["Close"].iloc[-1]),2)
-                pnl=round((cp_-pc_)*pn_,2); pct_v=round((cp_-pc_)/max(pc_,0.01)*100,2)
-                tc=round(pc_*pn_,0); cv=round(cp_*pn_,0); hd=(date.today()-pd_).days; ann=round(pct_v/max(hd,1)*365,2)
+                cp_ = round(float(ph_["Close"].iloc[-1]),2)
+                pnl = round((cp_-pc_)*pn_,2)
+                pct_v = round((cp_-pc_)/max(pc_,0.01)*100,2)
+                tc = round(pc_*pn_,0)
+                cv = round(cp_*pn_,0)
+                hd = (date.today()-pd_).days
+                ann = round(pct_v/max(hd,1)*365,2)
                 
                 st.subheader(f"📌 {ps_sym} 試算結果")
                 mc1,mc2,mc3,mc4,mc5=st.columns(5)
-                mc1.metric("💰 現價",cp_); mc2.metric("📊 總成本",f"{tc:,.0f}"); mc3.metric("💎 現值",f"{cv:,.0f}"); mc4.metric("損益",f"{pnl:+,.0f}",delta=f"{pct_v:+.2f}%",delta_color="inverse"); mc5.metric("年化",f"{ann:+.1f}%",delta=str(ann),delta_color="inverse")
+                mc1.metric("💰 現價",cp_)
+                mc2.metric("📊 總成本",f"{tc:,.0f}")
+                mc3.metric("💎 現值",f"{cv:,.0f}")
+                mc4.metric("損益",f"{pnl:+,.0f}",delta=f"{pct_v:+.2f}%",delta_color="inverse")
+                mc5.metric("年化",f"{ann:+.1f}%",delta=str(ann),delta_color="inverse")
 
                 c1_s,c2_s=st.columns(2)
                 with c1_s:
                     if st.button("💾 正式寫入資產庫",key="save_pf"):
                         if ps_sym in st.session_state.portfolio:
                             entries = st.session_state.portfolio[ps_sym]
-                            if isinstance(entries, dict): entries = [entries]
+                            if isinstance(entries, dict): 
+                                entries = [entries]
                             old_shares = sum(e.get("shares", 0) for e in entries)
                             old_cost_total = sum(e.get("cost", 0) * e.get("shares", 0) for e in entries)
                             total_shares = old_shares + pn_
                             avg_cost = (old_cost_total + (pc_ * pn_)) / total_shares if total_shares > 0 else 0
                             st.session_state.portfolio[ps_sym] = entries + [{"cost": pc_, "shares": pn_, "note": "", "buy_date": str(pd_)}]
-                        else: st.session_state.portfolio[ps_sym] = [{"cost": pc_, "shares": pn_, "note": "", "buy_date": str(pd_)}]
+                        else: 
+                            st.session_state.portfolio[ps_sym] = [{"cost": pc_, "shares": pn_, "note": "", "buy_date": str(pd_)}]
+                            
                         db_save_port(st.session_state.user_id, ps_sym, pc_, pn_, "", str(pd_))
                         st.success("✅ 已寫入")
                 with c2_s:
-                    if st.button("❌ 取消",key="can_pf"): st.session_state.show_pf_calc = False; st.rerun()
+                    if st.button("❌ 取消",key="can_pf"): 
+                        st.session_state.show_pf_calc = False
+                        st.rerun()
 
         if st.session_state.portfolio:
-            st.divider(); st.markdown("### 📋 庫存總覽")
-            sector_map = {}; pr_rows = []; tc_all = 0; cv_all = 0
+            st.divider()
+            st.markdown("### 📋 庫存總覽")
+            sector_map = {}
+            pr_rows = []
+            tc_all = 0
+            cv_all = 0
             
             for sym, entries in st.session_state.portfolio.items():
-                if isinstance(entries, dict): entries = [entries]
+                if isinstance(entries, dict): 
+                    entries = [entries]
                 total_s = sum(e.get("shares", 0) for e in entries)
                 total_c = sum(e.get("cost", 0) * e.get("shares", 0) for e in entries)
                 avg_c = round(total_c / total_s, 2) if total_s > 0 else 0
@@ -1209,19 +1693,24 @@ with TABS[2]:
                         if not hh2_clean.empty:
                             cp2 = round(float(hh2_clean.iloc[-1]), 2)
                             pnl_pct = round((cp2 - avg_c) / max(avg_c, 0.01) * 100, 2)
-                            v2 = round(cp2 * total_s, 0); c2 = round(total_c, 0)
-                            try: sec = yf.Ticker(sym).info.get("sector", "其他") or "其他"
-                            except: sec = "其他"
+                            v2 = round(cp2 * total_s, 0)
+                            c2 = round(total_c, 0)
+                            try: 
+                                sec = yf.Ticker(sym).info.get("sector", "其他") or "其他"
+                            except: 
+                                sec = "其他"
                             sector_map[sym] = sec
                             pr_rows.append({"代號": sym, "均價": avg_c, "現價": cp2, "損益%": f"{pnl_pct:+.2f}%", "總損益": f"{v2-c2:+,.0f}", "總股數": total_s, "板塊": sec})
-                            tc_all += c2; cv_all += v2
-                except: pass
+                            tc_all += c2
+                            cv_all += v2
+                except: 
+                    pass
             
             if pr_rows:
                 st.dataframe(pd.DataFrame(pr_rows), use_container_width=True, hide_index=True)
-                tp = cv_all - tc_all; tpct = round(tp / max(tc_all, 1) * 100, 2) if tc_all > 0 else 0
+                tp = cv_all - tc_all
+                tpct = round(tp / max(tc_all, 1) * 100, 2) if tc_all > 0 else 0
                 
-                # 更新大盤組合圓餅圖包含現金
                 sb_fig = build_portfolio_sunburst(st.session_state.portfolio, sector_map, st.session_state.cash_balance)
                 
                 s1, s2, s3 = st.columns(3)
@@ -1229,7 +1718,8 @@ with TABS[2]:
                 s2.metric("💎 庫存總現值", f"{cv_all:,.0f}元")
                 s3.metric("💵 總資產 (含現金)", f"{(cv_all + st.session_state.cash_balance):,.0f}元")
                 
-                if sb_fig: st.plotly_chart(sb_fig, use_container_width=True)
+                if sb_fig: 
+                    st.plotly_chart(sb_fig, use_container_width=True)
                 
                 if api_key:
                     if st.button("🏦 AI 投資長健檢你的持股配置", type="primary"):
@@ -1241,8 +1731,10 @@ with TABS[2]:
                                 st.markdown(secs[0])
                                 for sec in secs[1:]:
                                     lines = sec.split("\n", 1)
-                                    with st.expander(f"## {lines[0]}", expanded=True): st.markdown(lines[1] if len(lines) > 1 else "")
-                            except Exception as e: st.error(str(e)[:80])
+                                    with st.expander(f"## {lines[0]}", expanded=True): 
+                                        st.markdown(lines[1] if len(lines) > 1 else "")
+                            except Exception as e: 
+                                st.error(str(e)[:80])
 
             st.divider()
             st.markdown("#### 🗑️ 刪除 / 平倉 記錄")
@@ -1251,7 +1743,8 @@ with TABS[2]:
                 target_sym = st.selectbox("1. 選擇股票", options=list(st.session_state.portfolio.keys()))
                 if target_sym:
                     entries = st.session_state.portfolio[target_sym]
-                    if isinstance(entries, dict): entries = [entries] 
+                    if isinstance(entries, dict): 
+                        entries = [entries] 
                     entry_options = {f"價 {e.get('cost','?')} | {e.get('shares','?')}股 | 日期 {e.get('buy_date','')}": e for e in entries}
                     selected_label = st.selectbox("2. 選擇分筆記錄", options=list(entry_options.keys()))
                     to_delete = entry_options[selected_label]
@@ -1273,30 +1766,38 @@ with TABS[2]:
                             db_add_trade(st.session_state.user_id if st.session_state.logged_in else "local", ts_sym,"LONG",t_ep,t_xp,t_sh,t_ed,t_xd,"一鍵平倉")
                             st.session_state.trade_history.append({"symbol":ts_sym,"direction":"LONG","entry_price":t_ep,"exit_price":t_xp,"shares":t_sh,"entry_date":t_ed,"exit_date":t_xd,"pnl_amount":pnl_a,"pnl_pct":pnl_p,"note":"一鍵平倉"})
                             
-                            # 增加閒置現金
                             st.session_state.cash_balance += (t_xp * t_sh)
                             
-                            # 刪除庫存
-                            if st.session_state.logged_in and "db_id" in to_delete: db_del_port_by_id(st.session_state.user_id, to_delete["db_id"])
+                            if st.session_state.logged_in and "db_id" in to_delete: 
+                                db_del_port_by_id(st.session_state.user_id, to_delete["db_id"])
                             if isinstance(st.session_state.portfolio[target_sym], list):
                                 st.session_state.portfolio[target_sym].remove(to_delete)
-                                if not st.session_state.portfolio[target_sym]: del st.session_state.portfolio[target_sym]
-                            else: del st.session_state.portfolio[target_sym] 
-                            st.success("✅ 已平倉並匯入交易記錄，現金已加回！"); st.rerun()
+                                if not st.session_state.portfolio[target_sym]: 
+                                    del st.session_state.portfolio[target_sym]
+                            else: 
+                                del st.session_state.portfolio[target_sym] 
+                            st.success("✅ 已平倉並匯入交易記錄，現金已加回！")
+                            st.rerun()
                     else:
                         if st.button("❌ 確認刪除"):
-                            if st.session_state.logged_in and "db_id" in to_delete: db_del_port_by_id(st.session_state.user_id, to_delete["db_id"])
+                            if st.session_state.logged_in and "db_id" in to_delete: 
+                                db_del_port_by_id(st.session_state.user_id, to_delete["db_id"])
                             if isinstance(st.session_state.portfolio[target_sym], list):
                                 st.session_state.portfolio[target_sym].remove(to_delete)
-                                if not st.session_state.portfolio[target_sym]: del st.session_state.portfolio[target_sym]
-                            else: del st.session_state.portfolio[target_sym] 
-                            st.success("✅ 已刪除"); st.rerun()
+                                if not st.session_state.portfolio[target_sym]: 
+                                    del st.session_state.portfolio[target_sym]
+                            else: 
+                                del st.session_state.portfolio[target_sym] 
+                            st.success("✅ 已刪除")
+                            st.rerun()
 
     with asset_tab2:
         st.markdown("### ⭐ 自選股即時監控")
-        if not st.session_state.watchlist: st.info("無追蹤清單")
+        if not st.session_state.watchlist: 
+            st.info("無追蹤清單")
         else:
-            with st.spinner("批量抓取股價..."): quotes=fetch_batch_quotes(tuple(st.session_state.watchlist))
+            with st.spinner("批量抓取股價..."): 
+                quotes=fetch_batch_quotes(tuple(st.session_state.watchlist))
             wrows=[]
             for s in st.session_state.watchlist:
                 p_,ch_=quotes.get(s,(None,None))
@@ -1304,25 +1805,36 @@ with TABS[2]:
             st.dataframe(pd.DataFrame(wrows),use_container_width=True,hide_index=True)
             bcols=st.columns(min(len(st.session_state.watchlist),6))
             for i,s in enumerate(st.session_state.watchlist[:6]):
-                if bcols[i].button(f"📊{s}",key=f"wa_{i}"): st.session_state.quick_sym=s.replace(".TW",""); st.session_state.auto_analyze=True; st.rerun()
+                if bcols[i].button(f"📊{s}",key=f"wa_{i}"): 
+                    st.session_state.quick_sym=s.replace(".TW","")
+                    st.session_state.auto_analyze=True
+                    st.rerun()
 
     with asset_tab3:
         st.markdown("### 📋 已平倉交易")
         with st.expander("➕ 手動新增舊交易"):
             t1,t2,t3,t4 = st.columns(4)
-            with t1: t_sym=st.text_input("代號",key="th_sym")
-            with t2: t_ep=st.number_input("買入價",0.0,step=0.5,key="th_ep")
-            with t3: t_xp=st.number_input("賣出價",0.0,step=0.5,key="th_xp")
-            with t4: t_sh=st.number_input("股數",0.0,step=100.0,key="th_sh")
+            with t1: 
+                t_sym=st.text_input("代號",key="th_sym")
+            with t2: 
+                t_ep=st.number_input("買入價",0.0,step=0.5,key="th_ep")
+            with t3: 
+                t_xp=st.number_input("賣出價",0.0,step=0.5,key="th_xp")
+            with t4: 
+                t_sh=st.number_input("股數",0.0,step=100.0,key="th_sh")
             t5,t6,t7=st.columns(3)
-            with t5: t_ed=st.date_input("買入日",key="th_ed")
-            with t6: t_xd=st.date_input("賣出日",key="th_xd")
-            with t7: t_note=st.text_input("備注",key="th_note")
+            with t5: 
+                t_ed=st.date_input("買入日",key="th_ed")
+            with t6: 
+                t_xd=st.date_input("賣出日",key="th_xd")
+            with t7: 
+                t_note=st.text_input("備注",key="th_note")
             
             if st.button("💾 記錄此交易",key="add_trade_btn"):
                 if t_sym.strip() and t_ep>0 and t_xp>0 and t_sh>0:
                     ts_sym=get_sym(t_sym.strip(),market)
-                    pnl_a=round((t_xp-t_ep)*t_sh,2); pnl_p=round((t_xp-t_ep)/max(t_ep,0.01)*100,2)
+                    pnl_a=round((t_xp-t_ep)*t_sh,2)
+                    pnl_p=round((t_xp-t_ep)/max(t_ep,0.01)*100,2)
                     db_add_trade(st.session_state.user_id if st.session_state.logged_in else "local", ts_sym,"LONG",t_ep,t_xp,t_sh,str(t_ed),str(t_xd),t_note)
                     st.session_state.trade_history.append({"symbol":ts_sym,"direction":"LONG","entry_price":t_ep,"exit_price":t_xp,"shares":t_sh,"entry_date":str(t_ed),"exit_date":str(t_xd),"pnl_amount":pnl_a,"pnl_pct":pnl_p,"note":t_note})
                     st.success("✅ 記錄成功")
@@ -1351,50 +1863,72 @@ with TABS[3]:
         if st.button("🔍 掃描熱門股",type="primary",use_container_width=True):
             all_syms = []
             for v in (TW_HOT if "台股" in market else US_HOT).values():
-                for s,_ in v: all_syms.append(get_sym(s,market))
+                for s,_ in v: 
+                    all_syms.append(get_sym(s,market))
             cond = {}
-            if scr_rsi_lt>0: cond["rsi_lt"] = scr_rsi_lt
-            if scr_rsi_gt>0: cond["rsi_gt"] = scr_rsi_gt
-            if scr_macd: cond["macd_cross_up"] = True
-            if scr_ma20: cond["above_ma20"] = True
-            if scr_vol: cond["vol_spike"] = True
-            if scr_bb_lo: cond["bb_near_lower"] = True
+            if scr_rsi_lt>0: 
+                cond["rsi_lt"] = scr_rsi_lt
+            if scr_rsi_gt>0: 
+                cond["rsi_gt"] = scr_rsi_gt
+            if scr_macd: 
+                cond["macd_cross_up"] = True
+            if scr_ma20: 
+                cond["above_ma20"] = True
+            if scr_vol: 
+                cond["vol_spike"] = True
+            if scr_bb_lo: 
+                cond["bb_near_lower"] = True
                 
-            with st.spinner("掃描中..."): results = run_screener(all_syms,cond)
-            if results: st.dataframe(pd.DataFrame(results),use_container_width=True,hide_index=True)
-            else: st.info("無結果")
+            with st.spinner("掃描中..."): 
+                results = run_screener(all_syms,cond)
+            if results: 
+                st.dataframe(pd.DataFrame(results),use_container_width=True,hide_index=True)
+            else: 
+                st.info("無結果")
 
     with dca_tab:
         d1,d2,d3,d4=st.columns(4)
-        with d1: dca_sym=st.text_input("代號",placeholder="如0050",key="dca_s")
-        with d2: dca_amt=st.number_input("月投入",1000.0,1000000.0,10000.0,step=1000.0)
-        with d3: dca_yr =st.selectbox("年限",[3,5,10,15,20],index=1)
-        with d4: st.write(""); st.write(""); dca_btn=st.button("⏳ 回測",type="primary")
+        with d1: 
+            dca_sym=st.text_input("代號",placeholder="如0050",key="dca_s")
+        with d2: 
+            dca_amt=st.number_input("月投入",1000.0,1000000.0,10000.0,step=1000.0)
+        with d3: 
+            dca_yr =st.selectbox("年限",[3,5,10,15,20],index=1)
+        with d4: 
+            st.write("")
+            st.write("")
+            dca_btn=st.button("⏳ 回測",type="primary")
             
         if dca_btn and dca_sym.strip():
             with st.spinner("模擬與比對大盤基準中..."): 
                 df_dca,stats,err=run_dca(get_sym(dca_sym.strip(),market),dca_amt,dca_yr,market)
-            if df_dca is None: st.error(err)
+            if df_dca is None: 
+                st.error(err)
             else:
                 st.markdown("#### 🏆 定期定額 vs 大盤基準")
                 st.caption("夏普值(Sharpe Ratio)代表承擔每1%風險所獲得的超額報酬，> 1 為佳。")
                 cols = st.columns(4)
-                for idx, (k,v) in enumerate(stats.items()): cols[idx % 4].metric(k,v)
+                for idx, (k,v) in enumerate(stats.items()): 
+                    cols[idx % 4].metric(k,v)
                 st.plotly_chart(build_dca_chart(df_dca,dca_sym),use_container_width=True)
 
     with bt_tab:
         st.markdown("#### ⚙️ MA交叉策略歷史回測 (黃金交叉買入，死亡交叉賣出)")
         st.caption("利用過去歷史數據，驗證技術指標是否真的能賺錢。")
         bt_s1, bt_s2, bt_s3 = st.columns(3)
-        with bt_s1: bt_sym = st.text_input("測試標的", placeholder="如2330", key="bt_sym")
-        with bt_s2: bt_sw = st.number_input("短均線", value=5, min_value=2, max_value=20)
-        with bt_s3: bt_lw = st.number_input("長均線", value=20, min_value=10, max_value=60)
+        with bt_s1: 
+            bt_sym = st.text_input("測試標的", placeholder="如2330", key="bt_sym")
+        with bt_s2: 
+            bt_sw = st.number_input("短均線", value=5, min_value=2, max_value=20)
+        with bt_s3: 
+            bt_lw = st.number_input("長均線", value=20, min_value=10, max_value=60)
         
         if st.button("🚀 開始回測歷史3年", type="primary") and bt_sym.strip():
             sym_t = get_sym(bt_sym.strip(), market)
             with st.spinner("歷史回測計算中..."):
                 h_bt, _, err = fetch_data(sym_t, "3y")
-                if err or h_bt is None: st.error(err)
+                if err or h_bt is None: 
+                    st.error(err)
                 else:
                     wr, tr, tc = backtest_ma_crossover(h_bt, bt_sw, bt_lw)
                     st.success(f"✅ 回測完成 ({sym_t} 過去 3 年)")
@@ -1405,38 +1939,49 @@ with TABS[3]:
 
 with TABS[4]:
     if st.button("🔄 載入板塊熱力圖",type="primary"):
-        with st.spinner("抓取板塊數據..."): df_hm = fetch_heatmap_data(market)
-        if not df_hm.empty: st.plotly_chart(build_heatmap_chart(df_hm,market),use_container_width=True)
+        with st.spinner("抓取板塊數據..."): 
+            df_hm = fetch_heatmap_data(market)
+        if not df_hm.empty: 
+            st.plotly_chart(build_heatmap_chart(df_hm,market),use_container_width=True)
             
-    st.divider(); st.markdown("### 📊 主要指數")
+    st.divider()
+    st.markdown("### 📊 主要指數")
     for row in fetch_market_overview():
         c=TW_UP if row["漲跌%"]>=0 else TW_DOWN
         st.markdown(f'<div style="background:#1e1e2e;border-radius:8px;padding:10px 16px;margin:3px 0;border-left:4px solid {c};display:flex;justify-content:space-between"><span style="color:#e2e8f0">{row["名稱"]}</span><span style="color:{c};font-weight:bold">{row["現值"]} {"▲" if row["漲跌%"]>=0 else "▼"}{abs(row["漲跌%"]):.2f}%</span></div>',unsafe_allow_html=True)
 
 with TABS[5]:
     trades = st.session_state.trade_history
-    if len(trades)<3: st.warning("⚠️ 需要至少3筆已平倉記錄才能進行行為分析。")
+    if len(trades)<3: 
+        st.warning("⚠️ 需要至少3筆已平倉記錄才能進行行為分析。")
     else:
         bias = analyze_behavioral_bias(trades)
         if bias:
             b1,b2,b3,b4 = st.columns(4)
-            b1.metric("勝率",f"{bias['win_rate']}%"); b2.metric("平均獲利",f"+{bias['avg_win_pct']:.2f}%")
-            b3.metric("平均虧損",f"-{bias['avg_loss_pct']:.2f}%"); b4.metric("盈虧比",f"{round(bias['avg_win_pct']/max(bias['avg_loss_pct'],0.01),2)}x")
+            b1.metric("勝率",f"{bias['win_rate']}%")
+            b2.metric("平均獲利",f"+{bias['avg_win_pct']:.2f}%")
+            b3.metric("平均虧損",f"-{bias['avg_loss_pct']:.2f}%")
+            b4.metric("盈虧比",f"{round(bias['avg_win_pct']/max(bias['avg_loss_pct'],0.01),2)}x")
             
             b5,b6,b7 = st.columns(3)
-            b5.metric("持有獲利天數",f"{bias['avg_win_days']:.0f}天"); b6.metric("持有虧損天數",f"{bias['avg_loss_days']:.0f}天",delta="⚠️ 異常" if bias['avg_loss_days']>bias['avg_win_days'] else "正常",delta_color="off")
+            b5.metric("持有獲利天數",f"{bias['avg_win_days']:.0f}天")
+            b6.metric("持有虧損天數",f"{bias['avg_loss_days']:.0f}天",delta="⚠️ 異常" if bias['avg_loss_days']>bias['avg_win_days'] else "正常",delta_color="off")
             
-            if bias["disposition_effect"]: st.error("🚨 偵測到處置效應 (持有虧損股時間顯著長於獲利股)！請嚴格執行停損。")
+            if bias["disposition_effect"]: 
+                st.error("🚨 偵測到處置效應 (持有虧損股時間顯著長於獲利股)！請嚴格執行停損。")
             
             if api_key and st.button("🧠 AI 幫你抓投資壞習慣",type="primary"):
                 with st.spinner("AI 快速總結中..."):
                     try:
                         bias_rpt = ai_bias_warning(bias, "\n".join([f"- {t.get('symbol','')}: 損益{t.get('pnl_pct',0):+.1f}%" for t in trades[:10]]), api_key)
-                        secs = bias_rpt.split("\n## "); st.markdown(secs[0])
+                        secs = bias_rpt.split("\n## ")
+                        st.markdown(secs[0])
                         for sec in secs[1:]:
                             lines = sec.split("\n",1)
-                            with st.expander(f"## {lines[0]}",expanded=True): st.markdown(lines[1] if len(lines)>1 else "")
-                    except Exception as e: st.error(str(e)[:80])
+                            with st.expander(f"## {lines[0]}",expanded=True): 
+                                st.markdown(lines[1] if len(lines)>1 else "")
+                    except Exception as e: 
+                        st.error(str(e)[:80])
 
 st.divider()
-st.caption("📈 股市小白分析系統 Pro V7.0 | 大滿配終極版 | ⚠️ 內容僅供學習參考，不構成投資建議")
+st.caption("📈 股市小白分析系統 Pro V7.1 | 大滿配終極版 (修復版) | ⚠️ 內容僅供學習參考，不構成投資建議")
