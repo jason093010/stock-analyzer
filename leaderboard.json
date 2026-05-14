@@ -1,0 +1,142 @@
+[
+    {
+        "sym": "2603",
+        "name": "Evergreen Marine Corporation (Taiwan) Ltd.",
+        "score": 77,
+        "status": "短線偏多 🔵",
+        "dims": {
+            "技術": 22,
+            "動能": 25,
+            "量能": 10,
+            "位階": 10,
+            "布林": 10
+        },
+        "update_time": "2026-05-14 19:18"
+    },
+    {
+        "sym": "2356",
+        "name": "Inventec Corporation",
+        "score": 75,
+        "status": "強勢多頭 📈",
+        "dims": {
+            "技術": 30,
+            "動能": 18,
+            "量能": 20,
+            "位階": 4,
+            "布林": 3
+        },
+        "update_time": "2026-05-14 19:18"
+    },
+    {
+        "sym": "2881",
+        "name": "Fubon Financial Holding Co., Ltd.",
+        "score": 74,
+        "status": "強勢多頭 📈",
+        "dims": {
+            "技術": 30,
+            "動能": 25,
+            "量能": 5,
+            "位階": 4,
+            "布林": 10
+        },
+        "update_time": "2026-05-14 19:18"
+    },
+    {
+        "sym": "2382",
+        "name": "Quanta Computer Inc.",
+        "score": 72,
+        "status": "短線偏多 🔵",
+        "dims": {
+            "技術": 23,
+            "動能": 25,
+            "量能": 10,
+            "位階": 4,
+            "布林": 10
+        },
+        "update_time": "2026-05-14 19:18"
+    },
+    {
+        "sym": "NVDA",
+        "name": "NVIDIA Corporation",
+        "score": 72,
+        "status": "強勢多頭 📈",
+        "dims": {
+            "技術": 30,
+            "動能": 25,
+            "量能": 10,
+            "位階": 4,
+            "布林": 3
+        },
+        "update_time": "2026-05-14 19:18"
+    },
+    {
+        "sym": "2317",
+        "name": "Hon Hai Precision Industry Co., Ltd.",
+        "score": 71,
+        "status": "強勢多頭 📈",
+        "dims": {
+            "技術": 30,
+            "動能": 22,
+            "量能": 5,
+            "位階": 4,
+            "布林": 10
+        },
+        "update_time": "2026-05-14 19:18"
+    },
+    {
+        "sym": "2330",
+        "name": "Taiwan Semiconductor Manufacturing Company Limited",
+        "score": 69,
+        "status": "短線偏多 🔵",
+        "dims": {
+            "技術": 23,
+            "動能": 22,
+            "量能": 10,
+            "位階": 4,
+            "布林": 10
+        },
+        "update_time": "2026-05-14 19:18"
+    },
+    {
+        "sym": "2454",
+        "name": "MediaTek Inc.",
+        "score": 64,
+        "status": "強勢多頭 📈",
+        "dims": {
+            "技術": 30,
+            "動能": 15,
+            "量能": 5,
+            "位階": 4,
+            "布林": 10
+        },
+        "update_time": "2026-05-14 19:18"
+    },
+    {
+        "sym": "3231",
+        "name": "Wistron Corporation",
+        "score": 61,
+        "status": "盤整蓄勢 ⚪",
+        "dims": {
+            "技術": 16,
+            "動能": 10,
+            "量能": 10,
+            "位階": 15,
+            "布林": 10
+        },
+        "update_time": "2026-05-14 19:18"
+    },
+    {
+        "sym": "2308",
+        "name": "Delta Electronics, Inc.",
+        "score": 57,
+        "status": "短線偏多 🔵",
+        "dims": {
+            "技術": 23,
+            "動能": 15,
+            "量能": 5,
+            "位階": 4,
+            "布林": 10
+        },
+        "update_time": "2026-05-14 19:18"
+    }
+]
