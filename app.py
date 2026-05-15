@@ -847,6 +847,12 @@ with st.sidebar:
                     st.session_state.watchlist = db_load_wl(uid)
                     st.session_state.portfolio = db_load_port(uid)
                     st.session_state.trade_history = db_load_trades(uid)
+                    
+                    # 👇 補上這三行：手動登入時也要把資料庫的加密金鑰解出來
+                    if enc:
+                        dec = decrypt_key(enc, upin.strip())
+                        if dec: st.session_state.api_key = dec
+                        
                     if cookie_controller is not None:
                         cookie_controller.set("tw_stock_u", uname.strip(), max_age=30*86400)
                         cookie_controller.set("tw_stock_p", upin.strip(), max_age=30*86400)

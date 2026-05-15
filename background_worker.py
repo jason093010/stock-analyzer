@@ -115,9 +115,10 @@ def generate_leaderboard():
     if not universe: return
         
     all_tickers = [sym for cat in universe.values() for sym in cat.keys()]
-    print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 📥 開始批次下載 {len(all_tickers)} 檔歷史數據...")
+    print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 📥 開始批次下載 {len(all_tickers)} 檔歷史數據 (降載模式)...")
     
-    data = yf.download(all_tickers, period="6mo", group_by="ticker", threads=True, progress=True)
+    # 將 threads=True 改為 threads=False，避免 Render 記憶體爆掉被強制砍除
+    data = yf.download(all_tickers, period="6mo", group_by="ticker", threads=False, progress=True)
     
     valid_dfs = {}
     for sym in all_tickers:
