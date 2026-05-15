@@ -59,11 +59,15 @@ def get_universe():
                 uni["主動式ETF" if sym.endswith('A') else "被動式ETF"][f_sym] = name
             elif len(sym) == 4 and sym.isdigit(): uni["個股"][f_sym] = name
         return uni
-    except: return None
+    except Exception as e:
+        print(f"❌ 取得股票清單失敗，錯誤訊息：{e}")
+        return None
 
 def run_pipeline():
     universe = get_universe()
-    if not universe: return
+    if not universe: 
+        print("⚠️ 程式提前終止：無法獲取股票清單。請檢查 API 連線或套件狀態。")
+        return
         
     tickers = [s for cat in universe.values() for s in cat.keys()]
     print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 開始下載 {len(tickers)} 檔歷史數據...")
