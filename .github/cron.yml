@@ -1,0 +1,27 @@
+name: AI Quant Worker
+on:
+  schedule:
+    # 台灣時間 09:00 到 14:00 (對應 UTC 時間 01:00-06:00)，每週一至週五的每小時執行
+    - cron: '0 1-6 * * 1-5'
+  workflow_dispatch: # 允許手動點擊觸發
+
+jobs:
+  run-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Execute AI Worker
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python ai_worker.py
