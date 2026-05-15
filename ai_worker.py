@@ -17,7 +17,6 @@ def calc_ml_features(hist: pd.DataFrame, bm_hist: pd.DataFrame = None) -> pd.Dat
     df = hist.copy()
     c, h, l, v = df["Close"].astype(float), df["High"].astype(float), df["Low"].astype(float), df["Volume"].astype(float)
     
-    # 基礎特徵
     df['ma5'] = c.rolling(5).mean()
     df['ma20'] = c.rolling(20).mean()
     df['ma60'] = c.rolling(60).mean()
@@ -35,12 +34,10 @@ def calc_ml_features(hist: pd.DataFrame, bm_hist: pd.DataFrame = None) -> pd.Dat
     df['bb_pct'] = (c - (bb_m - 2*bb_s)) / (4*bb_s + 1e-10)
     df['vol_ratio'] = v / v.rolling(20).mean().replace(0, 1)
     
-    # 進階特徵：ATR 波動率與跳空缺口
     tr = pd.concat([h-l, (h-c.shift()).abs(), (l-c.shift()).abs()], axis=1).max(axis=1)
     df['atr_ratio'] = tr.rolling(14).mean() / c
     df['gap_pct'] = (df['Open'] - c.shift(1)) / c.shift(1)
     
-    # 目標標籤：未來 3 天高點是否突破 2%
     future_high = h.shift(-3).rolling(3).max()
     df['target'] = ((future_high / c - 1) > 0.02).astype(int)
     
@@ -70,8 +67,10 @@ def run_pipeline():
         return
         
     tickers = [s for cat in universe.values() for s in cat.keys()]
-    print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 開始下載 {len(tickers)} 檔歷史數據...")
-    data = yf.download(tickers, period="6mo", group_by="ticker", threads=True, progress=False)
+    print(f"[{datetime.now(TW_TZ).strftime('%H:%M:%S')}] 開始下載 {len(tickers)} 檔歷史數據 (單線程防擋模式)...")
+    
+    # 解決 Yahoo 限流：關閉多線程 (threads=False)
+    data = yf.download(tickers, period="6mo", group_by="ticker", threads=False, progress=False)
     
     valid_dfs = {}
     for sym in tickers:
@@ -112,8 +111,13 @@ def run_pipeline():
             vr = v / (df["Volume"].rolling(20).mean().iloc[-1] + 1e-10)
             cs = (c - l) / max((h - l), 0.01)
             
+            # 解決 AttributeError：將計算拆解並使用 max() 避免除以零
+            up_m = df["Close"].diff().clip(lower=0).rolling(14).mean().iloc[-1]
+            dn_m = -df["Close"].diff().clip(upper=0).rolling(14).mean().iloc[-1]
+            rsi_val = 100 - (100 / (1 + up_m / max(dn_m, 1e-10)))
+            
             dt_s = min(100, int((vr * 15) + (cs * 30) + (20 if c > vwap else 0)))
-            st_s = min(100, int((35 if ma5 > ma20 else 0) + (15 if 40 <= (100 - (100 / (1 + df["Close"].diff().clip(lower=0).rolling(14).mean().iloc[-1] / (-df["Close"].diff().clip(upper=0)).rolling(14).mean().iloc[-1].replace(0, 1e-10)))) <= 70 else 0)))
+            st_s = min(100, int((35 if ma5 > ma20 else 0) + (15 if 40 <= rsi_val <= 70 else 0)))
             lt_s = min(100, int((40 if c > ma60 else 0) + (30 if ma20 > ma60 else 0)))
             
             db_records.append({
