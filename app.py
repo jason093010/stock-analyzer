@@ -28,6 +28,8 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
+# 已移除手動設定 asyncio 事件迴圈的區塊，以解決 AnyIO 與 Streamlit 伺服器衝突的問題。
+
 try:
     from streamlit_cookies_controller import CookieController
     cookie_controller = CookieController()
@@ -839,7 +841,7 @@ with st.sidebar:
         with st.expander("🔐 登入 / 建立帳號", expanded=True):
             uname = st.text_input("帳號", key="sb_u")
             upin  = st.text_input("密碼", type="password", key="sb_p")
-            if st.button("🔑 登入 / ✨ 建立", use_container_width=True) and uname and upin:
+            if st.button("🔑 登入 / ✨ 建立", width="stretch") and uname and upin:
                 ok, uid, enc = db_verify_user(uname.strip(), upin.strip())
                 if not ok: ok, uid, msg = db_create_user(uname.strip(), upin.strip())
                 if ok:
@@ -848,7 +850,6 @@ with st.sidebar:
                     st.session_state.portfolio = db_load_port(uid)
                     st.session_state.trade_history = db_load_trades(uid)
                     
-                    # 👇 補上這三行：手動登入時也要把資料庫的加密金鑰解出來
                     if enc:
                         dec = decrypt_key(enc, upin.strip())
                         if dec: st.session_state.api_key = dec
@@ -859,7 +860,7 @@ with st.sidebar:
                     st.rerun()
     else:
         st.success(f"👤 {st.session_state.username}")
-        if st.button("🚪 登出", use_container_width=True):
+        if st.button("🚪 登出", width="stretch"):
             st.session_state.logged_in = False
             if cookie_controller is not None: 
                 cookie_controller.remove("tw_stock_u")
@@ -941,7 +942,7 @@ with TABS[0]:
     ic1,ic2 = st.columns([3,1])
     with ic1: ticker_in = st.text_input("輸入股票代號",value=st.session_state.quick_sym or "")
     with ic2: 
-        st.write(""); st.write(""); go_btn = st.button("🔍 開始分析",use_container_width=True,type="primary")
+        st.write(""); st.write(""); go_btn = st.button("🔍 開始分析",width="stretch",type="primary")
         
     uploaded_report = st.file_uploader("📄 選擇性上傳該公司之法說會/財報 (PDF)，啟用 RAG 深度查核", type=['pdf'])
 
@@ -1053,7 +1054,7 @@ with TABS[0]:
                             buy_markers.append({"date":bdate,"price":pd2.get("cost")})
                         except: pass
 
-            st.plotly_chart(build_main_chart(hist,ind,entry,sym,mc_data,buy_markers if buy_markers else None),use_container_width=True)
+            st.plotly_chart(build_main_chart(hist,ind,entry,sym,mc_data,buy_markers if buy_markers else None), width="stretch")
 
             st.divider()
             st.markdown("### [AI] 多週期三方辯論分析")
@@ -1068,7 +1069,7 @@ with TABS[0]:
                     with debate_tab3: st.markdown(judge_rpt)
 
 # ==========================================
-# 分頁 2: ML 預測排行榜 (直連 Supabase，無亂碼原生渲染)
+# 分頁 2: ML 預測排行榜 (直連 Supabase)
 # ==========================================
 with TABS[1]:
     st.markdown("### 🏆 全市場機器學習勝率排行榜 (Top 50)")
@@ -1111,7 +1112,7 @@ with TABS[1]:
         except Exception as e:
             st.error(f"資料庫讀取失敗：{e}")
     else:
-        st.error("⚠️ 尚未連線 Supabase！請於側邊欄確認資料庫設定，或在 secrets.toml 填寫 SUPABASE_URL 與 SUPABASE_KEY 以啟用 ML 排行榜。")
+        st.error("⚠️ 尚未連線 Supabase！請於側邊欄確認資料庫設定。")
 
 # ==========================================
 # 分頁 3: 雙股深度 PK (支援 RAG)
@@ -1151,7 +1152,7 @@ with TABS[3]:
         with p3: pn_ = st.number_input("持有股數",0.0,step=100.0,key="pf_n_")
         with p4: pd_ = st.date_input("買入日期",key="pf_d_")
         with p5: 
-            st.write(""); st.write(""); p_btn = st.button("💾 寫入資產庫",use_container_width=True,type="primary")
+            st.write(""); st.write(""); p_btn = st.button("💾 寫入資產庫", width="stretch", type="primary")
 
         if p_btn and ps_.strip() and pc_>0 and pn_>0:
             ps_sym = get_sym(ps_.strip(),market)
@@ -1191,7 +1192,7 @@ with TABS[3]:
                 except: pass
             
             if pr_rows:
-                st.dataframe(pd.DataFrame(pr_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(pr_rows), width="stretch", hide_index=True)
                 tp, tpct = cv_all - tc_all, round((cv_all - tc_all) / max(tc_all, 1) * 100, 2) if tc_all > 0 else 0
                 
                 sb_fig = build_portfolio_sunburst(st.session_state.portfolio, sector_map, st.session_state.cash_balance)
@@ -1199,7 +1200,7 @@ with TABS[3]:
                 s1.metric("📊 庫存總損益", f"{tp:+,.0f}元", delta=f"{tpct:+.2f}%", delta_color="inverse")
                 s2.metric("💎 庫存總現值", f"{cv_all:,.0f}元")
                 s3.metric("💵 總資產 (含現金)", f"{(cv_all + st.session_state.cash_balance):,.0f}元")
-                if sb_fig: st.plotly_chart(sb_fig, use_container_width=True)
+                if sb_fig: st.plotly_chart(sb_fig, width="stretch")
                 
                 if api_key:
                     if st.button("🏦 AI 投資長健檢你的持股配置", type="primary"):
@@ -1248,7 +1249,7 @@ with TABS[3]:
         trades = st.session_state.trade_history
         if trades:
             tr_df=pd.DataFrame([{"代號":t.get("symbol",""),"買入價":t.get("entry_price",0),"賣出價":t.get("exit_price",0),"損益":f"{(t.get('pnl_amount') or 0):+,.0f}","損益%":f"{(t.get('pnl_pct') or 0):+.2f}%"} for t in trades])
-            st.dataframe(tr_df,use_container_width=True,hide_index=True)
+            st.dataframe(tr_df, width="stretch", hide_index=True)
             win_t=sum(1 for t in trades if (t.get("pnl_pct") or 0)>0)
             st.metric("📊 累積損益",f"{sum((t.get('pnl_amount') or 0) for t in trades):+,.0f}元",delta=f"勝率{round(win_t/max(len(trades),1)*100,1)}%",delta_color="inverse")
 
@@ -1275,7 +1276,7 @@ with TABS[4]:
             if scr_ma20: cond["above_ma20"] = True
             if scr_vol: cond["vol_spike"] = True
             with st.spinner("掃描中..."): results = run_screener(all_syms,cond)
-            if results: st.dataframe(pd.DataFrame(results),use_container_width=True,hide_index=True)
+            if results: st.dataframe(pd.DataFrame(results), width="stretch", hide_index=True)
             else: st.info("無結果")
 
     with dca_tab:
@@ -1292,7 +1293,7 @@ with TABS[4]:
             else:
                 cols = st.columns(4)
                 for idx, (k,v) in enumerate(stats.items()): cols[idx % 4].metric(k,v)
-                st.plotly_chart(build_dca_chart(df_dca,dca_sym),use_container_width=True)
+                st.plotly_chart(build_dca_chart(df_dca,dca_sym), width="stretch")
 
     with bt_tab:
         bt_s1, bt_s2, bt_s3 = st.columns(3)
@@ -1320,7 +1321,7 @@ with TABS[5]:
             df_hm, hm_time = fetch_heatmap_data(market)
         if not df_hm.empty: 
             st.caption(f"資料來源：Yahoo Finance | 更新時間：{hm_time}")
-            st.plotly_chart(build_heatmap_chart(df_hm,market),use_container_width=True)
+            st.plotly_chart(build_heatmap_chart(df_hm,market), width="stretch")
 
 # ==========================================
 # 分頁 7: 交易心理診斷
@@ -1341,7 +1342,7 @@ with TABS[6]:
             b5.metric("持有獲利天數",f"{bias['avg_win_days']:.0f}天")
             b6.metric("持有虧損天數",f"{bias['avg_loss_days']:.0f}天",delta="⚠️ 異常" if bias['avg_loss_days']>bias['avg_win_days'] else "正常",delta_color="off")
             
-            if bias["disposition_effect"]: st.error("🚨 偵測到處置效應 (持有虧損股時間顯著長於獲利股)！請嚴格執行停損。")
+            if bias["disposition_effect"]: st.error("🚨 偵測到處置效應！請嚴格執行停損。")
             
             if api_key and st.button("🧠 AI 幫你抓投資壞習慣",type="primary"):
                 with st.spinner("AI 快速總結中..."):
